@@ -1,0 +1,19 @@
+# Bundle patch for dsh-pet-indesktop.
+#
+# This is what makes the package a PROFILE LAYER rather than an inert
+# dependency. When someone runs
+#
+#   dsh plugin --profile web add github:Gjs9178U/dsh-pet-indesktop
+#
+# DSH reconciles dsh.profile.bundles against installed packages: a dependency
+# whose manifest declares `dsh.bundle.patch` (package.json) joins the layer
+# stack and this insert row mounts the plugin. Without it the package installs
+# and does nothing, emitting "declares no dsh.bundle" as a warning.
+#
+# The shape matches the shipped bundle patches (e.g. dsh-whale-widget,
+# dsh-boot-animation). `id` and `name` are both the package name: the loader
+# entry name is what shows up in `dsh plugin list`, and keeping the two equal
+# is the convention the sibling plugin proved out.
+- insert:
+    - id: dsh-pet-indesktop
+      name: dsh-pet-indesktop

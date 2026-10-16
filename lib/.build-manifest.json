@@ -1,0 +1,15 @@
+{
+  "builtAt": "2026-10-16T02:10:11.407Z",
+  "generator": "scripts/build.mjs (host copy + client copy with banner + manifest)",
+  "host": [
+    "index.js"
+  ],
+  "client": [
+    "client.js"
+  ],
+  "types": [
+    "types/index.d.ts",
+    "types/client/index.d.ts"
+  ],
+  "clientBundleBytes": 43121
+}

@@ -1,0 +1,19 @@
+# node_modules/ — the plugin ships prebuilt, so this stays out of the repo.
+node_modules/
+package-lock.json
+pnpm-lock.yaml
+*.tgz
+build-log.txt
+
+# Editor / OS noise.
+.DS_Store
+Thumbs.db
+*.swp
+
+# NOTE: lib/ is deliberately NOT ignored.
+#
+# `dsh plugin add github:Gjs9178U/dsh-pet-indesktop` installs straight from
+# the git checkout, and the package declares no prepare/postinstall script — so
+# the built output has to be IN the repository or the install produces a package
+# that cannot load. It is also what keeps the install away from pnpm's
+# allowBuilds gate: a build script that never runs never needs approving.

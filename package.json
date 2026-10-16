@@ -1,0 +1,82 @@
+{
+  "name": "dsh-pet-indesktop",
+  "version": "0.1.0",
+  "description": "给 DSH 网页界面加一只会呼吸、会眨眼、能拖动、能记住位置的桌宠（纯 SVG + CSS，无外部素材、无网络请求）。A draggable desktop pet for the DSH web GUI: inline SVG and CSS only, no assets and no network, whose position survives a reload.",
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./lib/types/index.d.ts",
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "README.en.md",
+    "CHANGELOG.md",
+    "ARCHITECTURE.md",
+    "LICENSE"
+  ],
+  "license": "BSD-3-Clause",
+  "author": "Gjs9178U",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Gjs9178U/dsh-pet-indesktop.git"
+  },
+  "homepage": "https://github.com/Gjs9178U/dsh-pet-indesktop#readme",
+  "bugs": {
+    "url": "https://github.com/Gjs9178U/dsh-pet-indesktop/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "cordis",
+    "pet",
+    "desktop-pet",
+    "whale"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "react": "^18.2.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "verify:build": "node scripts/check-css-template.mjs && node scripts/verify-build.mjs",
+    "verify:routes": "node scripts/verify-routes.mjs",
+    "verify:boot": "node scripts/verify-client-boot.mjs",
+    "verify:pet": "node scripts/verify-pet.mjs",
+    "check": "npm run verify:build && npm run verify:routes && npm run verify:boot && npm run verify:pet"
+  },
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./lib/types/client/index.d.ts",
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-session"
+      ],
+      "platform": "web"
+    },
+    "engines": {
+      "dsh": ">=0.1.5-rc.1"
+    }
+  }
+}
