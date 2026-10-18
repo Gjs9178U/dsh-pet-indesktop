@@ -50,6 +50,17 @@
  * another full-frame layer in between without ever outranking one. Both numbers
  * are documented in ARCHITECTURE.md; neither is arbitrary.
  *
+ * ── The picture ──────────────────────────────────────────────────────────────
+ *
+ * The pet is EIGHT PNGs (`assets/skins/<id>.png`, copied to `lib/assets/skins/`)
+ * served by this plugin's own host half at `/dsh-pet-indesktop/assets/skins/<id>.png`.
+ * The id is a key into an allow-list, never a path segment. Not a CDN,
+ * not a data: URI, not an external host — the same process that serves this
+ * bundle serves the image, so there is still no third-party request anywhere.
+ * The idle motion (bob, sway, breathe) is CSS on wrappers around the `<img>`; the
+ * pure functions below decide the MODE and whether motion is allowed at all.
+ * The artwork carries an "OleapCrow" mark; see README for the attribution.
+ *
  * ── The decision matrix is DATA ──────────────────────────────────────────────
  *
  * Everything the pet decides is a PURE function exported from this bundle:
@@ -124,6 +135,86 @@ window.__ModuleLoader__.load({
     const STATE_READ_URL = '/dsh-pet-indesktop/state.json'
 
     /**
+     * The skins, served by this plugin's own host half.
+     *
+     * Same origin and same package as the bundle, so there is no third party, no
+     * CDN and no cross-origin request — and the host serves each one with
+     * `no-cache` + ETag, so a skin is downloaded once and then revalidated with a
+     * bodyless 304.
+     *
+     * `SKIN_IDS` is the client's copy of the host's ALLOW-LIST. It has to exist on
+     * both sides because the client cannot import from the host, and
+     * `scripts/build.mjs` compares the two (and the directory) so a skin added to
+     * one side only fails the build instead of shipping a swatch that 404s.
+     */
+    const SKIN_IDS = Object.freeze([
+      'deepsea',
+      'sakura',
+      'mint',
+      'twilight',
+      'caramel',
+      'silver',
+      'ink',
+      'ember',
+    ])
+    const DEFAULT_SKIN = 'deepsea'
+
+    /**
+     * Where a skin lives. The id is appended to this prefix — and the id is only
+     * ever a value that came out of `resolveSkin`, i.e. one of the eight strings
+     * above, so no request or stored value can put anything else in the URL.
+     */
+    const SKIN_URL_PREFIX = '/dsh-pet-indesktop/assets/skins'
+
+    /** The URL for a validated id. */
+    function skinUrl(id) {
+      return `${SKIN_URL_PREFIX}/${String(id)}.png`
+    }
+
+    /**
+     * Fold anything into a known skin id — the ONE place an id is chosen.
+     *
+     * A stored `skin` can be anything: a hand-edited state.json, a payload from a
+     * different version, a typo. Every path that renders a skin goes through this,
+     * so the `<img>` can never point at a file that does not exist. Returns a
+     * member of `SKIN_IDS`, always.
+     *
+     * The comparison is exact (`includes`), never a prefix or a pattern: the id is
+     * a key into a fixed list, not a path fragment.
+     */
+    function resolveSkin(value) {
+      return SKIN_IDS.includes(value) ? value : DEFAULT_SKIN
+    }
+
+    /**
+     * The human labels for the swatches. The pet is 大肥鱼, and the copy says so:
+     * the product is bilingual, and a colour name alone would not tell a Chinese
+     * user which pet they are recolouring.
+     */
+    const SKIN_LABELS = Object.freeze({
+      deepsea: { zh: '深海蓝', en: 'Deep Sea' },
+      sakura: { zh: '樱花粉', en: 'Sakura' },
+      mint: { zh: '薄荷绿', en: 'Mint' },
+      twilight: { zh: '暮光紫', en: 'Twilight' },
+      caramel: { zh: '焦糖金', en: 'Caramel' },
+      silver: { zh: '雪白银', en: 'Silver' },
+      ink: { zh: '墨黑', en: 'Ink' },
+      ember: { zh: '余烬红', en: 'Ember' },
+    })
+
+    /** The pet's own name, in both languages, for the UI copy. */
+    const PET_NAME = Object.freeze({ zh: '大肥鱼', en: 'Big Fat Fish' })
+
+    /**
+     * The drawn width, in CSS pixels, and the source's aspect ratio (420x409).
+     *
+     * A fixed width with `height:auto` is what keeps the picture undistorted when
+     * the browser scales it for a high-DPI display.
+     */
+    const PET_WIDTH = 160
+    const PET_ASPECT = 409 / 420
+
+    /**
      * How long a speech bubble stays up. Short on purpose: a pet that talks
      * forever is a modal dialog with extra steps.
      */
@@ -158,15 +249,17 @@ window.__ModuleLoader__.load({
       bubble: 'dpi-bubble',
       bubbleZh: 'dpi-bubble-zh',
       bubbleEn: 'dpi-bubble-en',
-      whale: 'dpi-whale',
-      body: 'dpi-body',
-      tail: 'dpi-tail',
-      fin: 'dpi-fin',
-      spout: 'dpi-spout',
-      eye: 'dpi-eye',
-      blush: 'dpi-blush',
+      pet: 'dpi-pet',
+      img: 'dpi-img',
       toggle: 'dpi-toggle',
       toggleDot: 'dpi-toggle-dot',
+      panel: 'dpi-panel',
+      popover: 'dpi-popover',
+      popoverTitle: 'dpi-popover-title',
+      swatches: 'dpi-swatches',
+      swatch: 'dpi-swatch',
+      swatchOn: 'dpi-swatch-on',
+      swatchDot: 'dpi-swatch-dot',
     }
 
     // ── the stylesheet ───────────────────────────────────────────────────────
@@ -177,7 +270,7 @@ window.__ModuleLoader__.load({
     // that, and is part of `npm run build`.
 
     const CSS = `
-/* dsh-pet-indesktop — the whale, in CSS. No image, no font, no network. */
+/* dsh-pet-indesktop — the pet layer. One bundled PNG, no external anything. */
 
 /* The pet's own layer. 2147481000: above ordinary chrome, 2000 BELOW the
    full-frame overlay the sibling plugin draws at 2147483000, so an intro
@@ -185,38 +278,32 @@ window.__ModuleLoader__.load({
 .dpi-root{position:fixed;inset:0;z-index:2147481000;pointer-events:none;
   display:block;overflow:hidden}
 
-/* Only the pet's box takes clicks; the rest of the layer is transparent to them,
-   so a pet sitting in the middle of the page never blocks the page. */
-.dpi-pet{position:absolute;width:112px;height:92px;
+/* Only the pet's own box takes pointer events; the rest of the layer is
+   transparent to them, so a pet sitting in the middle of the page never blocks
+   the page. The gesture lives HERE, on the wrapper, and the image itself is
+   pointer-events:none so the wrapper keeps it. */
+.dpi-pet{position:absolute;width:160px;
   transform:translate(-50%,-100%);
   pointer-events:auto;cursor:grab;touch-action:none;
-  user-select:none;-webkit-user-select:none;
-  will-change:transform}
+  user-select:none;-webkit-user-select:none}
 .dpi-pet.dpi-dragging{cursor:grabbing}
 
-.dpi-whale{position:absolute;inset:0;display:block;width:100%;height:100%;
-  filter:drop-shadow(0 6px 10px rgba(4,10,24,.45));
-  transform-origin:50% 85%;
-  animation:dpi-breathe 3.2s ease-in-out infinite}
-.dpi-happy .dpi-whale{animation:dpi-hop 1.5s ease-in-out 1}
+/* The picture. Draggable is off in the markup as well: a browser's native image
+   drag would start its own ghost and fight the pointer gesture. */
+.dpi-img{display:block;width:100%;height:auto;
+  pointer-events:none;user-select:none;-webkit-user-select:none;
+  -webkit-user-drag:none;
+  filter:drop-shadow(0 6px 10px rgba(4,10,24,.45))}
 
-/* The tail is its own group so it can sway around its own joint, at a different
-   period from the breathing. Two periods that do not divide each other read as
-   alive instead of as a loop. */
-.dpi-tail{transform-origin:22% 52%;animation:dpi-sway 5.2s ease-in-out infinite}
-.dpi-happy .dpi-tail{animation-duration:1.5s}
-.dpi-fin{transform-origin:58% 66%;animation:dpi-fin-beat 5.2s ease-in-out infinite}
-
-/* Blinking is a class the component toggles from the pure blinkAt decision, so
-   the timing lives in JS (where a test can read it) and only the shape lives
-   here. NOTE for editors: no backticks anywhere inside this sheet — that is the
-   exact trap scripts/check-css-template.mjs exists to catch. */
-.dpi-eye{transform-origin:center;transition:transform 90ms ease-out}
-.dpi-blinking .dpi-eye{transform:scaleY(.12)}
-.dpi-happy .dpi-eye{transform:scaleY(.45)}
-
-.dpi-spout{opacity:0;transform-origin:50% 100%}
-.dpi-happy .dpi-spout{animation:dpi-spout 1.5s ease-out 1}
+/* Idle life: three transforms on two nested elements, so they cannot fight each
+   other. The wrapper bobs and sways at 5.2s; the picture breathes at 3.2s. The
+   two periods do not divide each other, which is what makes it read as alive
+   instead of as a loop. */
+.dpi-sway{transform-origin:50% 100%;animation:dpi-sway 5.2s ease-in-out infinite}
+.dpi-bob{transform-origin:50% 100%;animation:dpi-bob 5.2s ease-in-out infinite}
+.dpi-happy .dpi-bob{animation:dpi-hop 1.5s ease-in-out 1}
+.dpi-happy .dpi-sway{animation-duration:1.5s}
+.dpi-img{transform-origin:50% 100%;animation:dpi-breathe 3.2s ease-in-out infinite}
 
 /* The speech bubble. Chinese on the first line, English under it: the product is
    bilingual, and a pet that only speaks one of them is a pet for half its users. */
@@ -231,6 +318,41 @@ window.__ModuleLoader__.load({
 .dpi-bubble-zh{font-weight:600}
 .dpi-bubble-en{opacity:.72;font-size:11.5px;margin-top:2px}
 
+/* The panel lives in the sidebar footer, not in this layer. It is a positioned
+   wrapper so the popover can hang above the button; the footer must not clip it,
+   so the popover is placed with position:absolute and a high z-index of its own. */
+.dpi-panel{position:relative;display:inline-block;font-family:inherit}
+
+/* The eight swatches. Each dot is a flat colour that matches the skin it selects;
+   the tint is applied to the artwork, not to this dot, so the dot is only a key. */
+.dpi-popover{position:absolute;left:0;bottom:calc(100% + 8px);z-index:2;
+  max-width:min(18rem,80vw);
+  min-width:11rem;padding:9px 10px 10px;border-radius:12px;
+  background:rgba(12,20,38,.97);border:1px solid rgba(148,163,184,.35);
+  box-shadow:0 10px 28px rgba(0,0,0,.5);color:rgba(255,255,255,.92)}
+.dpi-popover-title{font-size:11px;letter-spacing:.04em;opacity:.7;
+  margin-bottom:8px;white-space:nowrap}
+/* Eight swatches do not fit on one line in a narrow sidebar, so the row wraps.
+   max-width is in swatch units (6 x 22px plus the gaps) so it stays readable
+   rather than matching some arbitrary pixel width.
+   NOTE for editors: no backticks inside this sheet — check-css-template.mjs
+   exists to catch exactly that, and it just did. */
+.dpi-swatches{display:flex;flex-wrap:wrap;gap:8px;align-items:center;max-width:174px}
+.dpi-swatch{width:22px;height:22px;padding:0;border-radius:999px;cursor:pointer;
+  display:inline-flex;align-items:center;justify-content:center;
+  border:1px solid rgba(148,163,184,.45);background:rgba(148,163,184,.12)}
+.dpi-swatch:hover{border-color:rgba(226,232,240,.8)}
+.dpi-swatch-on{border-color:#38bdf8;box-shadow:0 0 0 2px rgba(56,189,248,.35)}
+.dpi-swatch-dot{width:12px;height:12px;border-radius:999px;display:block}
+.dpi-swatch-dot-deepsea{background:#3b82f6}
+.dpi-swatch-dot-sakura{background:#f472b6}
+.dpi-swatch-dot-mint{background:#34d399}
+.dpi-swatch-dot-twilight{background:#a78bfa}
+.dpi-swatch-dot-caramel{background:#f59e0b}
+.dpi-swatch-dot-silver{background:#cbd5e1}
+.dpi-swatch-dot-ink{background:#1e293b}
+.dpi-swatch-dot-ember{background:#ef4444}
+
 /* The toggle lives in the sidebar footer, not in this layer. */
 .dpi-toggle{display:inline-flex;align-items:center;gap:7px;
   font-family:inherit;font-size:12px;line-height:1.2;
@@ -244,30 +366,25 @@ window.__ModuleLoader__.load({
   background:#38bdf8;box-shadow:0 0 6px rgba(56,189,248,.9)}
 
 @keyframes dpi-breathe{
-  0%{transform:translateY(0) scale(1,1)}
-  50%{transform:translateY(-3px) scale(1.02,.97)}
-  100%{transform:translateY(0) scale(1,1)}
+  0%{transform:scale(1,1)}
+  50%{transform:scale(1.018,.985)}
+  100%{transform:scale(1,1)}
+}
+@keyframes dpi-bob{
+  0%{transform:translateY(0)}
+  50%{transform:translateY(-5px)}
+  100%{transform:translateY(0)}
 }
 @keyframes dpi-hop{
   0%{transform:translateY(0) scale(1,1)}
-  35%{transform:translateY(-12px) scale(.98,1.04)}
+  35%{transform:translateY(-14px) scale(.98,1.04)}
   70%{transform:translateY(0) scale(1.03,.96)}
   100%{transform:translateY(0) scale(1,1)}
 }
 @keyframes dpi-sway{
-  0%{transform:rotate(-6deg)}
-  50%{transform:rotate(7deg)}
-  100%{transform:rotate(-6deg)}
-}
-@keyframes dpi-fin-beat{
-  0%{transform:rotate(0deg)}
-  45%{transform:rotate(-9deg)}
-  100%{transform:rotate(0deg)}
-}
-@keyframes dpi-spout{
-  0%{opacity:0;transform:translateY(0) scale(.6)}
-  25%{opacity:.9;transform:translateY(-6px) scale(1)}
-  100%{opacity:0;transform:translateY(-14px) scale(1.15)}
+  0%{transform:rotate(-2.5deg)}
+  50%{transform:rotate(2.5deg)}
+  100%{transform:rotate(-2.5deg)}
 }
 @keyframes dpi-pop{
   0%{opacity:0;transform:translateX(-50%) translateY(4px) scale(.94)}
@@ -278,13 +395,11 @@ window.__ModuleLoader__.load({
    not ignore this, so the fallback is a STILL FRAME, not a slower animation:
    "reduced" means less movement, and a slower bob is still a bob. */
 @media (prefers-reduced-motion:reduce){
-  .dpi-whale,.dpi-tail,.dpi-fin,.dpi-spout,.dpi-bubble{animation:none}
-  .dpi-happy .dpi-whale,.dpi-happy .dpi-tail,.dpi-happy .dpi-spout{animation:none}
-  .dpi-eye{transition:none}
+  .dpi-sway,.dpi-bob,.dpi-img,.dpi-bubble{animation:none}
+  .dpi-happy .dpi-bob,.dpi-happy .dpi-sway{animation:none}
   .dpi-pet{transition:none}
 }
 `
-
     // ── the pure decision functions ──────────────────────────────────────────
     //
     // Everything below takes numbers and returns numbers or plain data. No DOM,
@@ -624,71 +739,33 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * The whale. Inline SVG, so there is no asset to fetch and nothing to licence.
+     * The picture.
      *
-     * Every animated part is a class; the numbers come from the pure functions, so
-     * the drawing has no opinions about timing.
+     * A plain `<img>` served by this plugin's own host half. `draggable={false}`
+     * because a browser's native image drag would start its own ghost and fight
+     * the pointer gesture on the wrapper; `pointer-events:none` comes from the
+     * sheet for the same reason, so the wrapper keeps the gesture no matter where
+     * on the picture the pointer lands.
+     *
+     * `alt=""` is deliberate: the wrapper is the accessible control (it has
+     * role="button" and a label), and a nested accessible name would be read out
+     * twice.
      */
-    function Whale(props) {
-      const pose = props.pose
-      const style = pose.still ? undefined : { transform: `translateY(${String(pose.breath)}px)` }
-      return React.createElement(
-        'svg',
-        {
-          className: CLASS.whale,
-          style,
-          viewBox: '0 0 112 92',
-          width: '112',
-          height: '92',
-          role: 'img',
-          'aria-label': 'desktop pet',
-        },
-        // the spout, drawn first so the body overlaps it
-        React.createElement('g', { className: CLASS.spout }, [
-          React.createElement('circle', { key: 's1', cx: '52', cy: '16', r: '4', fill: 'rgba(186,230,253,.75)' }),
-          React.createElement('circle', { key: 's2', cx: '46', cy: '9', r: '2.6', fill: 'rgba(186,230,253,.6)' }),
-          React.createElement('circle', { key: 's3', cx: '58', cy: '8', r: '2.2', fill: 'rgba(186,230,253,.5)' }),
-        ]),
-        // the tail: its own group so it sways around its own joint
-        React.createElement(
-          'g',
-          {
-            className: CLASS.tail,
-            style: pose.still ? undefined : { transform: `rotate(${String(pose.sway)}deg)` },
-          },
-          [
-            React.createElement('path', {
-              key: 't',
-              d: 'M22 52 C8 40 4 24 12 14 C22 24 28 36 32 46 Z',
-              fill: '#2f6fd0',
-            }),
-            React.createElement('path', {
-              key: 't2',
-              d: 'M22 52 C10 52 2 58 2 66 C14 66 24 62 30 56 Z',
-              fill: '#255bb0',
-            }),
-          ],
-        ),
-        // the body
-        React.createElement('path', {
-          className: CLASS.body,
-          d: 'M30 46 C36 24 62 14 84 22 C100 28 108 44 104 58 C100 72 84 82 64 82 C44 82 30 70 26 58 C25 54 27 49 30 46 Z',
-          fill: '#3b82f6',
-        }),
-        React.createElement('path', {
-          d: 'M44 78 C56 84 76 84 90 74 C80 86 58 90 44 78 Z',
-          fill: 'rgba(191,219,254,.55)',
-        }),
-        // the fin
-        React.createElement('path', {
-          className: CLASS.fin,
-          d: 'M60 66 C66 60 78 60 84 66 C78 76 66 78 60 66 Z',
-          fill: '#255bb0',
-        }),
-        // the face
-        React.createElement('circle', { className: CLASS.eye, cx: '74', cy: '42', r: '4.4', fill: '#0b1220' }),
-        React.createElement('circle', { className: CLASS.blush, cx: '86', cy: '52', r: '4', fill: 'rgba(251,113,133,.45)' }),
-      )
+    function PetImage(props) {
+      // NOTE: no React key on the img. Swapping src keeps this element — and
+      // therefore the wrappers' CSS animations — alive, so a skin switch is a
+      // picture change, not a remount. A remount would restart bob/sway/breath from
+      // 0% and the pet would visibly jump.
+      return React.createElement('img', {
+        className: CLASS.img,
+        src: skinUrl(resolveSkin(props.skin)),
+        alt: '',
+        width: String(PET_WIDTH),
+        height: String(Math.round(PET_WIDTH * PET_ASPECT)),
+        draggable: false,
+        decoding: 'async',
+        loading: 'eager',
+      })
     }
 
     /** The pet layer: drag it, click it, or hide with the button. */
@@ -705,6 +782,9 @@ window.__ModuleLoader__.load({
         'tick',
         now,
       )
+      // Still computed and still cheap: the pose decides the class names
+      // (`dpi-happy`, `dpi-blinking`) and, through `pose.still`, whether the
+      // sheet's animations run at all. The MOVE is CSS; the DECISION is here.
       const stance = stanceAt({ position, reducedMotion: props.reducedMotion }, now)
 
       // A bubble is a plain timeout, cleared on unmount: no interval, no listener.
@@ -803,7 +883,13 @@ window.__ModuleLoader__.load({
                 React.createElement('div', { className: CLASS.bubbleZh }, line.zh),
                 React.createElement('div', { className: CLASS.bubbleEn }, line.en),
               ),
-          React.createElement(Whale, { pose }),
+          // Two nested divs so the sway and the bob are separate transforms: one
+          // element cannot carry two animations that both set `transform`.
+          React.createElement(
+            'div',
+            { className: 'dpi-sway' },
+            React.createElement('div', { className: 'dpi-bob' }, React.createElement(PetImage, { skin: state.skin })),
+          ),
         ),
       )
     }
@@ -827,23 +913,69 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * The sidebar button. It is separate from the pet on purpose: if the only way
-     * to show the pet were the pet itself, hiding it would be a one-way door.
+     * The sidebar control: a small popover, not a bare button.
+     *
+     * It is separate from the pet on purpose: if the only way to show the pet were
+     * the pet itself, hiding it would be a one-way door. It now carries three jobs —
+     * show/hide, choose a skin, and name the pet — so it opens a panel instead of
+     * toggling on click.
+     *
+     * The panel is a role="group" with a label, not a dialog: it traps nothing and
+     * Escape closes it. Every swatch is a <button> with aria-pressed and a bilingual
+     * label, so it is reachable by keyboard and announced correctly rather than
+     * being an unnamed coloured dot.
      */
-    function ToggleButton(props) {
+    function PetPanel(props) {
       const on = props.state.visible
+      const skin = resolveSkin(props.state.skin)
+      const labelOf = (id) => {
+        const entry = SKIN_LABELS[id]
+        return entry.zh + " / " + entry.en
+      }
       return React.createElement(
-        'button',
-        {
-          type: 'button',
-          className: CLASS.toggle,
-          'data-on': on ? 'true' : 'false',
-          'aria-pressed': on ? 'true' : 'false',
-          title: on ? '隐藏桌宠 / Hide the pet' : '显示桌宠 / Show the pet',
-          onClick: props.onToggle,
-        },
-        React.createElement('span', { className: CLASS.toggleDot }),
-        React.createElement('span', null, on ? '桌宠 开' : '桌宠 关'),
+        'div',
+        { className: CLASS.panel },
+        React.createElement(
+          'button',
+          {
+            type: 'button',
+            className: CLASS.toggle,
+            'data-on': on ? 'true' : 'false',
+            'aria-pressed': on ? 'true' : 'false',
+            'aria-expanded': props.open ? 'true' : 'false',
+            title: on ? '隐藏大肥鱼 / Hide Big Fat Fish' : '显示大肥鱼 / Show Big Fat Fish',
+            onClick: props.onToggleOpen,
+          },
+          React.createElement('span', { className: CLASS.toggleDot }),
+          React.createElement('span', null, PET_NAME.zh + ' ' + (on ? '开' : '关')),
+        ),
+        props.open
+          ? React.createElement(
+              'div',
+              { className: CLASS.popover, role: 'group', 'aria-label': PET_NAME.zh + ' / ' + PET_NAME.en },
+              React.createElement('div', { className: CLASS.popoverTitle }, PET_NAME.zh + ' · ' + PET_NAME.en),
+              React.createElement(
+                'div',
+                { className: CLASS.swatches },
+                SKIN_IDS.map((id) =>
+                  React.createElement(
+                    'button',
+                    {
+                      key: id,
+                      type: 'button',
+                      className: CLASS.swatch + (id === skin ? ' ' + CLASS.swatchOn : ''),
+                      'data-skin': id,
+                      'aria-pressed': id === skin ? 'true' : 'false',
+                      'aria-label': labelOf(id),
+                      title: labelOf(id),
+                      onClick: () => props.onPickSkin(id),
+                    },
+                    React.createElement('span', { className: CLASS.swatchDot + ' ' + CLASS.swatchDot + '-' + id }),
+                  ),
+                ),
+              ),
+            )
+          : null,
       )
     }
 
@@ -914,6 +1046,10 @@ window.__ModuleLoader__.load({
               store.current = next
               mounted.setPosition(clampPosition(next))
               mounted.setVisible(next.visible)
+              // The saved look, folded through the resolver: an unknown id in the
+              // file falls back to the default instead of pointing the <img> at a
+              // file that does not exist.
+              mounted.setSkin(next.skin)
             })
           }
 
@@ -941,7 +1077,7 @@ window.__ModuleLoader__.load({
     }
 
     /** The default state, mirrored here so the client renders before it has heard from the host. */
-    const DEFAULT_STATE_LIKE = Object.freeze({ version: 1, visible: true, x: 92, y: 88 })
+    const DEFAULT_STATE_LIKE = Object.freeze({ version: 1, visible: true, x: 92, y: 88, skin: DEFAULT_SKIN })
 
     /**
      * Keep only what the host would accept.
@@ -955,6 +1091,10 @@ window.__ModuleLoader__.load({
       if (typeof source.visible === 'boolean') out.visible = source.visible
       out.x = clampPercent(source.x)
       out.y = clampPercent(source.y)
+      // The host validates the skin on the way in, but a state file can be edited
+      // by hand and an older payload may not carry the field at all — so the skin
+      // is folded through the resolver here too, never trusted as a path.
+      out.skin = resolveSkin(source.skin)
       return out
     }
 
@@ -967,6 +1107,7 @@ window.__ModuleLoader__.load({
     function mountPet(slots, store, client, moveTo) {
       let position = { x: store.current.x, y: store.current.y }
       let visible = store.current.visible
+      let skin = resolveSkin(store.current.skin)
       const subscribers = new Set()
 
       const emit = () => {
@@ -986,9 +1127,10 @@ window.__ModuleLoader__.load({
         return () => subscribers.delete(notify)
       }
 
-      const snapshot = () => ({ position, visible })
+      const snapshot = () => ({ position, visible, skin })
       const getVisible = () => visible
       const getPosition = () => position
+      const getSkin = () => skin
 
       const setPosition = (next) => {
         position = clampPosition(next)
@@ -998,6 +1140,16 @@ window.__ModuleLoader__.load({
         visible = next === true
         emit()
       }
+      /**
+       * Change the look. The image's src is the only thing that changes: the pet
+       * component stays mounted and the wrappers keep their animations, so the bob
+       * does not restart. `resolveSkin` guarantees a known id, so this can never
+       * point the <img> at a file the host does not serve.
+       */
+      const setSkin = (next) => {
+        skin = resolveSkin(next)
+        emit()
+      }
 
       const useSnapshot = () => React.useSyncExternalStore(subscribe, snapshot, snapshot)
 
@@ -1005,7 +1157,14 @@ window.__ModuleLoader__.load({
         const snapshotValue = useSnapshot()
         if (snapshotValue.visible !== true) return null
         return React.createElement(Pet, {
-          state: { ...store.current, visible: true, mode: pickMode(store.current.since, Date.now()) },
+          state: {
+            ...store.current,
+            visible: true,
+            // The store's skin, not the raw stored value: a hand-edited state.json
+            // must render the default look, never a broken <img>.
+            skin: snapshotValue.skin,
+            mode: pickMode(store.current.since, Date.now()),
+          },
           position: snapshotValue.position,
           reducedMotion: prefersReducedMotion(),
           onMove: moveTo,
@@ -1016,15 +1175,49 @@ window.__ModuleLoader__.load({
         })
       }
 
-      const ToggleSeat = () => {
+      /**
+       * The sidebar seat: the panel, its open/closed state, and the two actions.
+       *
+       * `open` lives here rather than in the store: whether a popover happens to be
+       * expanded is not part of the pet's persisted state, and restoring it across a
+       * reload would be surprising.
+       */
+      const PanelSeat = () => {
         const snapshotValue = useSnapshot()
-        return React.createElement(ToggleButton, {
-          state: { visible: snapshotValue.visible },
-          onToggle: () => {
-            const next = !getVisible()
-            store.current = { ...store.current, visible: next }
-            setVisible(next)
-            client.save({ visible: next })
+        const openState = React.useState(false)
+        const open = openState[0]
+        const setOpen = openState[1]
+
+        React.useEffect(() => {
+          if (!open) return undefined
+          const onKey = (event) => {
+            if (event.key === 'Escape') setOpen(false)
+          }
+          try {
+            document.addEventListener('keydown', onKey)
+          } catch {
+            /* no document (tests) */
+          }
+          return () => {
+            try {
+              document.removeEventListener('keydown', onKey)
+            } catch {
+              /* nothing to remove */
+            }
+          }
+        }, [open])
+
+        return React.createElement(PetPanel, {
+          state: { visible: snapshotValue.visible, skin: snapshotValue.skin },
+          open,
+          onToggleOpen: () => setOpen(!open),
+          onPickSkin: (id) => {
+            const next = resolveSkin(id)
+            store.current = { ...store.current, skin: next }
+            setSkin(next)
+            // Persisted immediately (not debounced): a skin is one click, and the
+            // user expects it to still be there after a reload.
+            client.save({ skin: next })
           },
         })
       }
@@ -1036,13 +1229,13 @@ window.__ModuleLoader__.load({
       )
       slots.inject('sidebar.footer.action', () =>
         slots.register(
-          { name: 'sidebar.footer.action', id: 'dsh-pet-indesktop-toggle', order: 40, label: () => '桌宠 / Pet' },
-          () => React.createElement(ToggleSeat, null),
+          { name: 'sidebar.footer.action', id: 'dsh-pet-indesktop-toggle', order: 40, label: () => '大肥鱼 / Big Fat Fish' },
+          () => React.createElement(PanelSeat, null),
         ),
       )
 
       void getPosition
-      return { setPosition, setVisible }
+      return { setPosition, setVisible, setSkin }
     }
 
     exports.apply = apply
@@ -1067,6 +1260,16 @@ window.__ModuleLoader__.load({
     exports.poseAt = poseAt
     exports.stanceAt = stanceAt
     exports.pickLine = pickLine
+    // The skin allow-list, exported as data for scripts/verify-pet.mjs and for the
+    // build's cross-side comparison. `resolveSkin` is the single place an id is
+    // chosen, so testing it tests every path that renders a skin.
+    exports.SKIN_IDS = SKIN_IDS
+    exports.DEFAULT_SKIN = DEFAULT_SKIN
+    exports.SKIN_LABELS = SKIN_LABELS
+    exports.PET_NAME = PET_NAME
+    exports.SKIN_URL_PREFIX = SKIN_URL_PREFIX
+    exports.resolveSkin = resolveSkin
+    exports.skinUrl = skinUrl
 
     return module.exports
   },

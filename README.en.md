@@ -4,13 +4,18 @@
 
 > **A working desktop pet: a real feature, not a stand-in.**
 >
-> What it does: puts a **small whale** (DeepSeek's mascot) in the bottom-right corner of the DSH web GUI. It
-> breathes slowly, blinks now and then, and sways its tail. **Press and drag** to move it (mouse or touch) and it
-> remembers where you left it. **Click it** and it says one line, Chinese over English, which disappears by itself.
-> A "桌宠 开 / 关" button in the sidebar footer hides it and brings it back.
+> What it does: puts a **hand-drawn little character** (blue hair, fin ears, whale tail, holding a white cup) in the
+> bottom-right corner of the DSH web GUI. It **bobs, sways and slowly "breathes"**. **Press and drag** to move it
+> (mouse or touch) and it remembers where you left it. **Click it** and it says one line, Chinese over English, which
+> disappears by itself. A "桌宠 开 / 关" button in the sidebar footer hides it and brings it back.
 >
-> How it is drawn: **inline SVG and CSS. No images, no fonts, no video, and no network requests** beyond reading and
-> writing its own state.
+> How it is drawn: **one PNG shipped with the plugin**, served by the plugin's own host half
+> (`/dsh-pet-indesktop/assets/skins/<id>.png`), with the motion in CSS around them. **There are no third-party requests**:
+> image, script and styles all come from the same package and the same process.
+>
+> **Attribution:** the artwork carries an **"OleapCrow"** mark and was **supplied by the repository owner**. It is not
+> this project's own drawing and it is not official DeepSeek art. Licence situation: "supplied by the repository
+> owner; see LICENSE".
 >
 > **It has never been installed against a live DSH host.** Every verifier in this repository runs against artifact
 > text and in-memory handlers. They prove the plugin cannot hang the GUI, that the routes and the state validation
@@ -71,8 +76,9 @@ the loader's `require`.
 
 That envelope is **copied from the shipped artifact of the sibling plugin `dsh-boot-animation`** rather than
 inventing an ESM artifact. The price, stated plainly: the `factory` only receives `require` and cannot import
-sibling files, so **the whole browser half has to live in one file** — the stylesheet, the SVG and the component are
-all inside `src/client/index.js`, deliberately.
+sibling files, so **the whole browser half has to live in one file** — the stylesheet, the component and the
+image's `<img>` are all inside `src/client/index.js`, deliberately. (The images themselves are
+`lib/assets/skins/*.png`, served by the host half, not inlined into the JS.)
 
 ## Install
 
@@ -135,6 +141,7 @@ Three properties, each asserted by `scripts/verify-routes.mjs`:
 | `GET` | `/dsh-pet-indesktop/status.json` | plugin name, version, `behaviour`, route list, state file path |
 | `GET` | `/dsh-pet-indesktop/state.json` | read the state, defaults filled in |
 | `POST` | `/dsh-pet-indesktop/state.json/state` | partial update: validated, then persisted |
+| `GET` | `/dsh-pet-indesktop/assets/skins/<id>.png` | one skin (`lib/assets/skins/<id>.png`, served by this plugin) |
 
 Writes are strict, and they have to be:
 
@@ -148,6 +155,24 @@ Writes are strict, and they have to be:
 | Malformed JSON / empty body | 400 |
 | Wrong method | 405 |
 | Any rejected update | **not one byte is written** — there is no half-applied state |
+
+### The image is cached with `no-cache` + ETag, **not** `no-store`
+
+The image is a constant: 200 KB, never changing (a new image means a rebuild and a restart). So its caching rule is the
+opposite of the state JSON's:
+
+| Route | Header | Why |
+| --- | --- | --- |
+| `status.json` / `state.json` / every failure | `no-store` | it answers "what is it right now"; a cached copy is a cached lie |
+| **`assets/skins/<id>.png` (success)** | **`no-cache` + a strong `ETag`** | "keep it, ask first": unchanged is one bodyless **304**, changed is one download |
+| any 404 under the image path | `no-store` | a 404 with no directive is heuristically cached, so one typo keeps 404ing |
+
+`no-store` here would mean **re-downloading 200 KB on every page load**. `no-cache` does not mean "do not cache"; it
+means "revalidate before use", which is exactly what an ETag is for.
+
+The `ETag` is the **SHA-256 of the bytes** (strong, quoted), not a modification time: a process restart or a fresh
+clone does not change it, only a different image does. `If-None-Match` gets a `304` with **no body**; `*` matches
+too; a stale or weak (`W/"..."`) validator deliberately does **not** match, or a new image could never be delivered.
 
 ## Why dynamic injection, and why static `inject` is forbidden
 
@@ -218,7 +243,13 @@ node scripts/build.mjs
 It copies `src/host/*.js` to `lib/host/*.js` (pruning stale modules), writes the one-line `lib/index.js` shim
 (`export * from './host/index.js'`), **copies** `src/client/index.js` to `lib/client.js` behind a generated
 banner, refuses to ship anything that is not in the `window.__ModuleLoader__.load({ ... })` shape or that contains
-an ESM statement, rewrites `lib/.build-manifest.json`, and asserts the two copies of the sheet agree.
+an ESM statement, **copies `assets/*.png` to `lib/assets/*.png`** (same stale-pruning, byte for byte, PNG magic
+bytes checked), rewrites `lib/.build-manifest.json` (which now records the assets and their total size), and asserts
+the two copies of the sheet agree.
+
+`lib/` is the only directory the package ships, so the artwork has to end up at `lib/assets/skins/` — which is
+exactly the file the host half reads and the URL the client asks for. `scripts/verify-build.mjs` asserts all three:
+the shipped copies exist, they are byte-identical to `assets/skins/`, and the client's allow-list matches them.
 
 **There is no compiler, and that is not a shortcut.** `lib/client.js` is `src/client/index.js` plus a banner,
 **byte for byte**. No tsdown, no TypeScript, no `npm install`, and no `devDependencies` — because the `factory`
@@ -238,17 +269,39 @@ node scripts/verify-pet.mjs
 
 None of the six requires installed dependencies; all of them run against the committed artifacts.
 
+## File map
+
+```
+package.json                    manifest: dsh.bundle + dsh.client + exports (no devDependencies)
+cordis.patch.yml                the insert row that makes the package a profile layer
+src/host/index.js               host half: status, state read/write, the pet image + its ETag
+src/client/index.js             browser half: the ONLY source file (loader envelope + <img> + sheet + pure functions)
+assets/skins/<id>.png           the eight skins (source, 420x409, shipped inside the package)
+lib/index.js                    generated one-line shim (main / exports point here)
+lib/host/index.js               built host half
+lib/client.js                   browser half artifact (= src/client/index.js + generated banner, no static inject)
+lib/assets/skins/<id>.png       skin artifacts (= assets/skins/, byte for byte)
+lib/types/*.d.ts                type declarations
+lib/.build-manifest.json        what is actually in lib/
+scripts/                        the build + verifiers
+submission/data/plugins/...     market submission file
+ARCHITECTURE.md                 the plumbing rules, and the reasons behind them
+CHANGELOG.md                    0.2.0: the pet is the real artwork now
+LICENSE                         BSD-3-Clause, plus the note on the artwork's provenance
+```
+
 ## Known limitations
 
 - **Not verified against a live DSH host.** The scripts read artifact text and drive in-memory handlers.
-- **React rendering is not exercised**: both the pet verifier and the boot verifier use a react stub whose
-  `createElement` returns `null`, so what the whale actually looks like on screen is untested.
+- **React rendering is not exercised**: the verifiers use a react stub whose `createElement` returns `null`, so how the
+  character actually looks on screen is untested. What they DO assert is the markup: that the pet renders an `<img>`,
+  its `src`, its declared width and height, and that the drag handlers live on a wrapper rather than on the picture.
 - **Dragging, pointer events and touch are not exercised either**: those need a real DOM. What IS verified is the
   decision matrix (clamping, poses, line selection) plus the parts that do not need rendering — the seats, the
-  stylesheet, the idle path and disposal.
-- The pet is **SVG + CSS**: no images, no video, no network requests, no sound.
-- The visual choices (the whale's exact shape, the animation timings) are the author's design decisions and have not
-  been user-tested.
+  stylesheet, the idle path, the asset route and disposal.
+- The pet is **one PNG + CSS**: no video, no third-party requests, no sound.
+- **The artwork is not this project's own**: it carries an "OleapCrow" mark and was supplied by the repository owner
+  (see `LICENSE`). The animation timings are this project's design decisions and have not been user-tested.
 
 ## License
 

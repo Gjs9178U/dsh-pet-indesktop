@@ -166,11 +166,16 @@ submission/data/plugins/Gjs9178U__dsh-pet-indesktop.yml
 
 ## 五、改桌宠要动哪里
 
-1. 改 `src/client/index.js`：**样式表、SVG、纯函数决策、React 组件都在这一个文件里**
+1. **换画面**：替换或新增 `assets/skins/<id>.png`（保持文件名；显示宽度由 `PET_WIDTH` 控制）。
+   构建会把 `assets/*.png` 复制到 `lib/assets/`，宿主半边从那里读。
+   画面带有 "OleapCrow" 标记、由仓库所有者提供 —— 换图时如果换成别人的作品，**必须更新 `LICENSE` 与两版 README 的署名**。
+2. **改行为/样式**：改 `src/client/index.js` —— **样式表、纯函数决策、`<img>` 与 React 组件都在这一个文件里**
    （加载器信封的 `factory` 只拿到 `require`，不能 import 兄弟文件，所以只能是一个文件）
-2. `node scripts/build.mjs` 重新生成 `lib/client.js`（复制 + 生成横幅）与 `lib/host/*`
-3. 跑验证：`npm run check`（CSS 模板守卫 + 构建 + 路由 + 启动安全 + 桌宠纯函数）
-4. **升版本号**并打 tag：
+3. `node scripts/build.mjs` 重新生成 `lib/client.js`（复制 + 生成横幅）、`lib/host/*` 与 `lib/assets/*`
+4. 跑验证：`npm run check`（CSS 模板守卫 + 构建 + 路由 + 启动安全 + 桌宠纯函数）。
+   换图之后 `verify-build.mjs` 会检查「`lib/assets/skins/` 与 `assets/skins/` 逐字节相同、PNG magic bytes，且客户端与宿主的 id 列表和目录三者一致」，
+   `verify-routes.mjs` 会检查图片路由的 200/304/404 与 ETag —— 两者都会因为一张坏图而变红，这是好事。
+5. **升版本号**并打 tag：
 
    ```sh
    npm version patch
@@ -180,7 +185,7 @@ submission/data/plugins/Gjs9178U__dsh-pet-indesktop.yml
    客户端 bundle 的 URL `rev` 是进程 nonce、不随内容变化，所以**用户升级后必须
    重启 DSH 服务 + Ctrl+Shift+R** 才能看到新版。README 里已经写明这一条。
 
-5. 如果改了**视觉或行为**，顺手更新 README 的「桌宠的行为」表与 `CHANGELOG.md`；
+6. 如果改了**视觉或行为**，顺手更新 README 的「桌宠的行为」表与 `CHANGELOG.md`；
    如果改了**坐标范围或状态字段**，必须同时改
    `src/host/index.js` 与 `src/client/index.js` 两边的夹取规则 ——
    `node scripts/verify-pet.mjs` 会用同一个网格把两边跑一遍，不一致就会红。

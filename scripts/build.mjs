@@ -10,6 +10,11 @@
  *                  generated banner. Byte-for-byte copy otherwise: there is no
  *                  transform step anywhere in this package, so the shipped
  *                  client is the reviewed source
+ *   3. skins       copy assets/skins/*.png -> lib/assets/skins/*.png, byte for
+ *                  byte and with the same stale-pruning as the host modules. The
+ *                  eight images are the pet's looks, so they ship with the package
+ *                  rather than being fetched from anywhere: the browser asks THIS
+ *                  plugin for them, by an id that must be on the allow-list
  *   3. guards       the CSS template literal must be present in both copies and
  *                  identical once whitespace is normalised, and lib/client.js
  *                  must still be in the loader-wrapper shape the web shell can
@@ -35,8 +40,12 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(HERE, '..')
 const SRC_HOST = join(ROOT, 'src', 'host')
 const SRC_CLIENT = join(ROOT, 'src', 'client', 'index.js')
+const SRC_ASSETS = join(ROOT, 'assets')
+const SRC_SKINS = join(SRC_ASSETS, 'skins')
 const LIB = join(ROOT, 'lib')
 const LIB_HOST = join(LIB, 'host')
+const LIB_ASSETS = join(LIB, 'assets')
+const LIB_SKINS = join(LIB_ASSETS, 'skins')
 
 /**
  * The generated banner for lib/client.js.
@@ -177,12 +186,122 @@ if (srcSheet !== libSheet) {
 }
 console.log('  ok   CSS sheet identical in src/client/index.js and lib/client.js (whitespace aside)')
 
+console.log('=== skins: assets/skins/*.png -> lib/assets/skins/*.png (copied byte for byte) ===')
+if (!existsSync(SRC_SKINS)) {
+  console.error('build: assets/skins/ is missing — the pet has nothing to draw')
+  process.exit(1)
+}
+mkdirSync(LIB_SKINS, { recursive: true })
+
+/**
+ * The skin ids, read from the DIRECTORY — the single source of truth for "which
+ * looks exist". The client's list and this list are compared below, so adding a
+ * file without a constant (or the other way round) fails the build instead of
+ * shipping a swatch that 404s or an asset nothing can select.
+ */
+const skinSources = readdirSync(SRC_SKINS)
+  .filter((name) => name.endsWith('.png'))
+  .map((name) => name.slice(0, -'.png'.length))
+  .sort()
+if (skinSources.length === 0) {
+  console.error('build: assets/skins/ holds no .png files — the pet has nothing to draw')
+  process.exit(1)
+}
+
+/**
+ * Prune first, exactly like the host modules: a skin removed from src must not
+ * survive in lib, where it would ship forever unnoticed.
+ *
+ * TWO sweeps, because the asset layout moved once already (`assets/pet.png` became
+ * `assets/skins/<id>.png`) and the inner sweep alone left `lib/assets/pet.png`
+ * behind — a 200 KB stale file that still shipped. Flat PNGs directly in
+ * `lib/assets` are never produced any more, so anything there is stale by
+ * definition.
+ */
+let prunedSkins = 0
+const strayFlat = readdirSync(LIB_ASSETS).filter((name) => name.endsWith('.png'))
+for (const name of strayFlat) {
+  rmSync(join(LIB_ASSETS, name))
+  prunedSkins += 1
+  console.log(`  ok   pruned stale lib/assets/${name}`)
+}
+for (const name of readdirSync(LIB_SKINS)) {
+  if (!name.endsWith('.png')) continue
+  if (skinSources.includes(name.slice(0, -'.png'.length))) continue
+  rmSync(join(LIB_SKINS, name))
+  prunedSkins += 1
+}
+for (const id of skinSources) {
+  cpSync(join(SRC_SKINS, `${id}.png`), join(LIB_SKINS, `${id}.png`))
+}
+
+{
+  const problems = []
+
+  // 1. Every shipped skin must really be a PNG.
+  for (const id of skinSources) {
+    const bytes = readFileSync(join(LIB_SKINS, `${id}.png`))
+    const isPng = bytes.length > 8 && bytes.subarray(0, 8).toString('hex') === '89504e470d0a1a0a'
+    if (!isPng) problems.push(`lib/assets/skins/${id}.png does not start with the PNG magic bytes`)
+    console.log(`  ok   lib/assets/skins/${id}.png (${String(bytes.length)} bytes, PNG)`)
+  }
+
+  // 2. The client's allow-list, read out of its CODE.
+  //
+  // An earlier version of this check used `clientBundle.includes(url)`, and a
+  // negative test proved it worthless: the URL also appears in the file header's
+  // prose, so a changed constant still "passed". A guard a comment can satisfy is
+  // not a guard.
+  const idsRaw = /const SKIN_IDS = Object\.freeze\(\[([^\]]+)\]\)/.exec(clientBundle)?.[1] ?? null
+  const clientIds = idsRaw === null ? null : [...idsRaw.matchAll(/'([^']+)'/g)].map((match) => match[1])
+  if (clientIds === null) {
+    problems.push('lib/client.js has no SKIN_IDS allow-list to check')
+  } else {
+    const clientSorted = [...clientIds].sort()
+    const missing = skinSources.filter((id) => !clientSorted.includes(id))
+    const extra = clientSorted.filter((id) => !skinSources.includes(id))
+    if (missing.length > 0) problems.push(`the client cannot select skin(s) that exist: ${missing.join(', ')}`)
+    if (extra.length > 0) problems.push(`the client offers skin(s) with no asset: ${extra.join(', ')}`)
+    if (new Set(clientSorted).size !== clientSorted.length) problems.push('the client skin list contains duplicates')
+  }
+
+  // 3. The client's URL builder and its default must agree with the host's.
+  const clientDefault = /const DEFAULT_SKIN = '([^']+)'/.exec(clientBundle)?.[1] ?? null
+  const hostDefault = /const DEFAULT_SKIN = '([^']+)'/.exec(readFileSync(join(LIB, 'host', 'index.js'), 'utf8'))?.[1] ?? null
+  if (clientDefault === null) problems.push('lib/client.js has no DEFAULT_SKIN')
+  if (hostDefault === null) problems.push('lib/host/index.js has no DEFAULT_SKIN')
+  if (clientDefault !== null && hostDefault !== null && clientDefault !== hostDefault) {
+    problems.push(`the client defaults to ${clientDefault} but the host to ${hostDefault}`)
+  }
+  if (clientDefault !== null && !skinSources.includes(clientDefault)) {
+    problems.push(`the default skin ${clientDefault} has no asset`)
+  }
+  const urlTemplate = /const SKIN_URL_PREFIX = '([^']+)'/.exec(clientBundle)?.[1] ?? null
+  if (urlTemplate !== '/dsh-pet-indesktop/assets/skins') {
+    problems.push(`lib/client.js builds skin URLs from ${String(urlTemplate)}, want /dsh-pet-indesktop/assets/skins`)
+  }
+  console.log(`  ok   the client's skin list matches the directory exactly (${skinSources.join(', ')})`)
+
+  if (problems.length > 0) {
+    console.error('build: the pet skins are not shippable:')
+    for (const problem of problems) console.error('  - ' + problem)
+    process.exit(1)
+  }
+  console.log(`  ok   lib/client.js builds skin URLs from ${String(urlTemplate)}`)
+  console.log(`skins: copied ${String(skinSources.length)} file(s), pruned ${String(prunedSkins)}`)
+}
+
 // A staleness marker that never changes without a real change.
 const manifest = {
   builtAt: new Date().toISOString(),
-  generator: 'scripts/build.mjs (host copy + client copy with banner + manifest)',
+  generator: 'scripts/build.mjs (host copy + client copy with banner + skin copy + manifest)',
   host: sources.map((name) => name),
   client: ['client.js'],
+  // The ids, not the file names: the id is the allow-list entry AND the URL segment,
+  // so a manifest that listed `deepsea.png` would be describing a different string
+  // from the one the client selects with.
+  skins: skinSources.map((id) => id),
+  skinsBytes: skinSources.reduce((total, id) => total + readFileSync(join(LIB_SKINS, `${id}.png`)).length, 0),
   types: ['types/index.d.ts', 'types/client/index.d.ts'],
   clientBundleBytes: Buffer.byteLength(clientBundle),
 }
@@ -191,5 +310,6 @@ writeFileSync(join(LIB, '.build-manifest.json'), JSON.stringify(manifest, null, 
 console.log('=== Build complete ===')
 console.log('')
 console.log('The client half WAS rebuilt: lib/client.js is src/client/index.js plus a generated banner.')
+console.log('The pet asset WAS copied: lib/assets/ is assets/, byte for byte.')
 console.log('No compiler, no bundler and no npm dependency is involved — the copy is the build.')
 console.log('Now: node scripts/verify-build.mjs && node scripts/verify-client-boot.mjs')

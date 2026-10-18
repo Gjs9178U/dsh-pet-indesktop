@@ -5,6 +5,116 @@ All notable changes to this project are documented here.
 
 ---
 
+## 0.3.0 — 2026-01-03
+
+### 八种配色皮肤 / Eight colour skins
+
+**桌宠现在叫「大肥鱼」/ "Big Fat Fish"，有八种皮肤可以随时切换。**
+0.2.0 只有一张图；0.3.0 把画面按区域重新配色，做出了八种读起来确实不同的样子
+（头发、鳍、尾巴和描线换色相/饱和度/明度；白色袖子、杯子和徽章做乘性着色；皮肤不动）。
+
+| id | 名字 | 看起来 |
+| --- | --- | --- |
+| `deepsea` | 深海蓝 / Deep Sea | 原始蓝色 |
+| `sakura` | 樱花粉 / Sakura | 粉 |
+| `mint` | 薄荷绿 / Mint | 薄荷绿 |
+| `twilight` | 暮光紫 / Twilight | 紫 |
+| `caramel` | 焦糖金 / Caramel | 琥珀金 |
+| `silver` | 雪白银 / Silver | 近乎白色 |
+| `ink` | 墨黑 / Ink | 近黑的海军蓝 |
+| `ember` | 余烬红 / Ember | 红 |
+
+### 新增 / Added
+
+- **八张皮肤资产**：`assets/skins/<id>.png`（420x409 RGBA，每张约 200 KB），构建时逐字节复制到
+  `lib/assets/skins/`，并清理陈旧文件。`assets/pet.png` 已删除（`deepsea` 与它同源，留着就是纯重复）。
+- **皮肤路由**：`GET /dsh-pet-indesktop/assets/skins/<id>.png`。
+  - `<id>` **只**与八项白名单比较，绝不作为路径片段；路径由**列表里的那一项**拼出。
+  - 未知 id、错误形状、`/assets` 下其他路径 → **`no-store` 的 404**（由本插件回，不是宿主的）。
+  - 每张图各自的 `no-cache` + 强 `ETag`（内容 SHA-256）、`If-None-Match` → 304 无 body、弱校验不算命中。
+- **状态增加 `skin` 字段**：与路由共用同一份白名单，默认 `deepsea`。未知值 → **400 并说明**；
+  手改 `state.json` 里的坏值 → **回落到默认**并报告 `healed`，不崩、不端出坏值、
+  不带一个会 404 的 `<img>`；旧版没有这个字段的文件被静默升级。
+- **侧边栏变成小面板**：显示/隐藏 + **八个色块**。每个色块是带 `aria-pressed` 与中英双语
+  `aria-label` 的 `<button>`（不是一个没有名字的彩色圆点）；面板是 `role="group"`，Esc 关闭。
+  点色块立刻换图并 POST 选择，刷新后仍在。
+- **换肤不重启动画**：只换 `<img>` 的 `src`，外面三层 `div`（摇摆 / 浮动 / 呼吸）保持挂载，
+  `<img>` 上没有 React `key` —— 所以不会跳一下。
+
+### 校验 / Verification
+
+- `verify-build.mjs`：八个资产都存在、与源逐字节相同、PNG magic bytes；**客户端列表 = 宿主列表 = 目录内容**
+  （三者必须完全一致，多一个少一个都失败）；每张 420x409；manifest 记录 `skins` / `skinsBytes`。
+- `verify-routes.mjs`：八个皮肤各自 200 + `image/png` + 内容哈希 ETag；304 路径；八个 ETag 两两不同；
+  未知 id / 十几种穿越形态 → `no-store` 404 且不返回任何一张图或 `package.json`；
+  `state.json` 的 `skin` 往返；坏 skin 的 POST → 400；文件里的坏 skin → 默认值。
+  另外**直接驱动 `asset server.load(id)`**，证明只有真正的 id 才触达文件系统。
+- `verify-client-boot.mjs`：面板标记（八个色块、双语 label、唯一 `aria-pressed`、`<img>` 无 key）；
+  两个座位与原有全部场景不变。
+- `verify-pet.mjs`：`resolveSkin` 的输入空间（31 个未知/恶意值全部回落到默认）；
+  由任何恶意值拼出的 URL 都是 `assets/skins/` 下的普通路径；客户端与宿主白名单一致。
+
+### 已知限制 / Known limitations
+
+- **仍然没有在真实 DSH 宿主上安装验证过。**
+- **面板的点击与换肤后的实际观感没有被验证过**：那需要真实 DOM 与浏览器。
+  被验证的是标记结构、路由行为、状态往返与 `resolveSkin` 的决策矩阵。
+
+---
+
+## 0.2.0 — 2026-01-02
+
+### 桌宠换上了真正的角色图 / The pet is the real artwork now
+
+**0.1.0 里那只内联 SVG 画的小鲸鱼是占位画面，现在没有了。** 0.2.0 的画面是仓库所有者提供的一张
+**420x409 的 PNG**——一个蓝头发、鳍状耳朵、鲸鱼尾巴、捧着白色杯子的手绘小角色。
+**（历史：0.2.0 只有这一张图，0.3.0 起它被扩成八种配色，见上。）**
+
+### 新增 / Added
+
+- **图片资产**：`assets/pet.png`（206,557 字节，RGBA）随包分发，构建时复制到 `lib/assets/pet.png`
+  （逐字节，且会清理 `lib/assets/` 里的陈旧文件）。构建会校验 PNG magic bytes，
+  并记录进 `lib/.build-manifest.json` 的 `assets` / `assetsBytes`。
+- **图片路由**：`GET /dsh-pet-indesktop/assets/pet.png`，由插件自己的宿主半边提供。
+  - `content-type: image/png`，`cache-control: no-cache`，**强 `ETag`（内容 SHA-256）**。
+  - `If-None-Match` 命中 → **304**，无 body；`*` 也匹配；过期或弱校验不匹配。
+  - 前缀注册在 `/assets` 目录上，所以 `/assets/` 下的未知路径由本插件回一个 **`no-store` 的 404**，
+    而不是落到宿主的 404（后者无缓存指令、无诊断）。
+  - **路径永远不来自请求**：文件位置 = 包根目录 + 两个常量。读失败只让这一条路由 500，不影响宿主。
+- **为什么不是 `no-store`**：图片是常量、约 200 KB。`no-store` 会让**每次页面加载都重新下载**；
+  `no-cache` + ETag 是「留着，但每次问一下」——没变就是一次无 body 的 304。这条规则写进了 `ARCHITECTURE.md`。
+- **客户端改用 `<img>`**：`src=` 指向上面的 URL，宽 **160 CSS px**（`height:auto` 保持比例），
+  `draggable={false}`、`pointer-events:none`，拖动仍然挂在包裹层上（否则浏览器自带的图片拖拽会和手势打架）。
+  `alt=""`：可访问控件是那个 `role="button"` 的包裹层，不是图片本身。
+- **闲置动效移进 CSS**：外面两层 `div` 分别承担**浮动**（5.2s）与**左右摇摆**（5.2s），
+  图片自己承担**呼吸缩放**（3.2s）。两个周期不互为倍数，读起来不像循环。
+  `prefers-reduced-motion: reduce` → 全部 `animation:none`，**静帧**，不是慢速动画。
+- **校验**：`verify-build.mjs` 断言图片存在、是 PNG、与源逐字节相同、客户端引用了那个 URL；
+  `verify-routes.mjs` 断言 200/304/404、ETag 是内容哈希、以及各种路径探测都是 404；
+  `verify-client-boot.mjs` 现在会**记录组件构建出的元素**，断言渲染的是 `<img>`、`src` 正确、
+  且不再有内联 SVG。
+
+### 移除 / Removed
+
+- 内联 SVG 的鲸鱼图形与它的 CSS 规则（`.dpi-whale` / `.dpi-tail` / `.dpi-fin` / `.dpi-spout` /
+  `.dpi-eye` / `.dpi-blush` 及 `dpi-hop`、`dpi-fin-beat`、`dpi-spout` 三组 keyframes）。
+- 「眨眼」不再有画面可动（眼睛在图片里，不在 DOM 里），所以 `.dpi-blinking` 的样式没有了；
+  `blinkAt` 纯函数仍然导出并仍然被验证，只是暂时没有渲染目标。
+
+### 署名 / Attribution
+
+- 画面带有 **"OleapCrow"** 的画师标记，由**仓库所有者提供**，不是本项目的原创绘制，
+  也不是 DeepSeek 官方素材。授权情况见 `LICENSE`：**supplied by the repository owner; see LICENSE**。
+
+### 已知限制 / Known limitations
+
+- **仍然没有在真实 DSH 宿主上安装验证过。**
+- **react 渲染和拖动手势仍然没有被验证过**（需要真实 DOM 与浏览器）；
+  被验证的是产物的结构、路由行为、以及桌宠的纯函数决策矩阵。
+- 图片的视觉效果（角色长什么样、动效好不好看）没有经过用研。
+
+---
+
 ## 0.1.0 — 2026-01-01
 
 ### 第一版：一只真的桌宠 / First release: a real desktop pet
@@ -13,10 +123,10 @@ All notable changes to this project are documented here.
 
 ### 新增 / Added
 
-- **桌宠本体**（`shell.overlay`，`order: 700`）：一只小鲸鱼，**内联 SVG + CSS**，
-  没有图片、没有字体、没有视频、没有网络请求。
+- **桌宠本体**（`shell.overlay`，`order: 700`）：一只有占位画面（内联 SVG 画的小鲸鱼）的桌宠。
   它会缓慢呼吸（3.2s）、偶尔眨眼（纯函数 `blinkAt` 决定时机）、尾巴轻摆（5.2s，
   与呼吸周期不互为倍数，读起来不像循环）。
+  **（历史：这只 SVG 鲸鱼已在 0.2.0 被真正的角色图替换，见上。）**
 - **拖动与记忆**：Pointer Events（鼠标与触摸同一套代码），位置在**同一个 clamp** 里更新，
   松手后经 **600ms 防抖** POST 给宿主；重新加载后从宿主恢复。位置存的是**视口百分比**而不是像素。
 - **点击说话**：中英双语各一行（`LINES`，6 条），2600ms 后自己消失；位移超过 4px 视为拖动，不触发说话。
@@ -57,7 +167,7 @@ All notable changes to this project are documented here.
 - **react 渲染没有被验证过**：两个校验脚本都用 react stub，`createElement` 返回 `null`，
   所以「画出来是什么样」没有被测过。
 - **拖动、指针事件、触摸没有被验证过**：需要真实 DOM。被验证的是决策矩阵，以及座位、样式表、待机、卸载。
-- 视觉细节（鲸鱼形状、动画节奏）是作者的设计选择，没有经过用研。
+- 视觉细节（当时的鲸鱼形状、动画节奏）是作者的设计选择，没有经过用研。
 
 ### 不变量 / Invariants（不要改）
 

@@ -4,19 +4,25 @@
 
 > **这是一个能用的桌宠（desktop pet），不是占位动画。**
 >
-> 它做什么：在 DSH 网页界面右下角放一只**小鲸鱼**（DeepSeek 的吉祥物形象）。它会缓慢地呼吸、偶尔眨眼、
-> 尾巴轻轻摆；**按住可以拖动**（鼠标和触摸都行），松开后位置会被记住；**点一下会说一句话**（中英双语，
-> 说完自己消失）；侧边栏底部有一个「桌宠 开 / 关」按钮，可以随时把它藏起来或叫回来。
+> 它做什么：在 DSH 网页界面右下角放一只**手绘的小角色**——蓝头发、鳍状耳朵、鲸鱼尾巴，手里捧着一个白色杯子。
+> 它会**上下轻轻浮动、左右微微摇摆、缓慢地“呼吸”**；**按住可以拖动**（鼠标和触摸都行），松开后位置会被记住；
+> **点一下会说一句话**（中英双语，说完自己消失）；侧边栏底部有一个「桌宠 开 / 关」按钮，
+> 可以随时把它藏起来或叫回来。
 >
-> 画法：**内联 SVG + CSS，没有图片、没有字体、没有视频、没有网络请求**（除了读写自己的状态）。
+> 它的名字是 **「大肥鱼」/ "Big Fat Fish"**，有 **八种配色皮肤**可以随时切换：
+> 深海蓝 `deepsea`、樱花粉 `sakura`、薄荷绿 `mint`、暮光紫 `twilight`、焦糖金 `caramel`、
+> 雪白银 `silver`、墨黑 `ink`、余烬红 `ember`。切换在侧边栏那枚按钮弹出的面板里点一下色块即可，
+> 选择会被记住（存在宿主上），重开页面也还在。
 >
-> **没有人拿真实的 DSH 宿主试过它。** 本仓库里的校验脚本全部针对**产物文本与内存中的处理器**运行，
-> 它们能证明插件不会把 GUI 弄挂、路由与状态校验按约定工作、桌宠的决策矩阵是对的 ——
-> 但它们**不能替代一次真实安装**。见下面「已知限制」。
+> 画法：**八张随插件一起分发的 PNG 图片**，由插件自己的宿主半边提供
+> （`/dsh-pet-indesktop/assets/skins/<id>.png`），动效是它外面的 CSS。**没有任何第三方请求**：
+> 图片、脚本、样式全部来自同一个包、同一个进程。
+>
+> **图片署名（attribution）：** 画面带有 **“OleapCrow”** 的画师标记，由**仓库所有者提供**，
+> 不是本项目的原创绘制，也不是 DeepSeek 的官方素材。授权情况见 `LICENSE`
+> ——「由仓库所有者提供；详见 LICENSE」。
 
-**English summary:** a working desktop pet for the DSH web GUI — one inline-SVG whale that breathes, blinks,
-sways, can be dragged, remembers where it was left, and says a bilingual line when clicked. No assets, no video,
-no network. It has **not** been installed against a live DSH host; see "Known limitations".
+**English summary:** a working desktop pet for the DSH web GUI — one hand-drawn character (blue hair, fin ears, whale tail, holding a white cup) that bobs, sways and breathes, can be dragged, remembers where it was left, and says a bilingual line when clicked. The image is one PNG shipped inside the plugin and served by its own host half, so there are no third-party requests, no video and no external assets. The artwork carries an "OleapCrow" mark and was supplied by the repository owner; see LICENSE for the licence situation. It has **not** been installed against a live DSH host; see "Known limitations".
 
 ---
 
@@ -60,6 +66,31 @@ no network. It has **not** been installed against a live DSH host; see "Known li
 完全不需要浏览器。这个模式是从姊妹插件 `dsh-boot-animation` 的 `decidePlay` 抄来的，
 它是唯一一个在真实宿主上活下来的写法。
 
+## 八种皮肤
+
+侧边栏底部那枚按钮（写着「大肥鱼 开 / 关」）点开是一个小面板：**上面是显示/隐藏，下面是八个色块**。
+点一个色块，画面立刻换，同时把选择 POST 给宿主 —— 所以刷新页面、重启 DSH、换个浏览器，皮肤都还在。
+
+| id | 名字 | 看起来 |
+| --- | --- | --- |
+| `deepsea` | 深海蓝 / Deep Sea | 原始配色，蓝色的头发与鳍 |
+| `sakura` | 樱花粉 / Sakura | 粉 |
+| `mint` | 薄荷绿 / Mint | 薄荷绿 |
+| `twilight` | 暮光紫 / Twilight | 紫 |
+| `caramel` | 焦糖金 / Caramel | 琥珀金 |
+| `silver` | 雪白银 / Silver | 近乎白色的银发 |
+| `ink` | 墨黑 / Ink | 接近黑的海军蓝 |
+| `ember` | 余烬红 / Ember | 红 |
+
+**换肤不会让动画重来一遍。** 切换只改 `<img>` 的 `src`，包裹它的三层 `div`（摇摆 / 浮动 / 呼吸）
+一直挂着，所以不会跳一下。这是刻意的，也是 `scripts/verify-client-boot.mjs` 断言的一条：
+`<img>` 上没有 React `key`，元素被复用而不是重建。
+
+**id 是白名单里的键，不是路径片段。** 客户端与宿主各有一份八个 id 的白名单（浏览器半边不能 import 宿主），
+`scripts/build.mjs` 会把这两份和 `assets/skins/` 目录**三者对齐**检查 —— 少一个、多一个都会让构建失败，
+而不是发一个点了 404 的色块。宿主的换肤路由从**列表里取到的那个字符串**拼路径，
+从不使用请求里的文本（详见 `ARCHITECTURE.md`）。
+
 ## 为什么客户端产物长成 `window.__ModuleLoader__.load({...})`
 
 因为 **DSH 的 web 外壳是这样加载客户端 bundle 的**：它定义 `window.__ModuleLoader__`，取回 bundle，
@@ -70,7 +101,8 @@ no network. It has **not** been installed against a live DSH host; see "Known li
 
 这个信封写法**照抄姊妹插件 `dsh-boot-animation` 的已发布产物**，而不是自己发明一种 ESM 产物。
 代价说清楚：`factory` 只拿到 `require`、无法 import 同目录的兄弟文件，
-所以**整个浏览器半边只能是一个文件** —— 样式表、SVG、组件都在 `src/client/index.js` 里，这是刻意的。
+所以**整个浏览器半边只能是一个文件** —— 样式表、组件，以及图片的 `<img>` 都在 `src/client/index.js` 里，
+这是刻意的。（图片本身是 `lib/assets/skins/*.png`，由宿主半边提供，不塞进 JS。）
 
 ## 安装
 
@@ -145,6 +177,7 @@ dsh plugin --profile web remove dsh-pet-indesktop
 | `GET` | `/dsh-pet-indesktop/status.json` | 插件名、版本、`behaviour`、路由列表、状态文件路径 |
 | `GET` | `/dsh-pet-indesktop/state.json` | 读状态（缺字段补默认值） |
 | `POST` | `/dsh-pet-indesktop/state.json/state` | 局部更新：校验通过才写，返回写入后的完整状态 |
+| `GET` | `/dsh-pet-indesktop/assets/skins/<id>.png` | 某个皮肤的图片（`lib/assets/skins/<id>.png`）；`<id>` 必须是八个之一 |
 
 **写入是严格的**，而且**必须是**：
 
@@ -167,6 +200,24 @@ curl -X POST .../state.json/state -d '{"visible": false}'
 | JSON 坏了 / 空 body | 400 |
 | 方法不对（`GET .../state.json/state`、`POST .../state.json`） | 405 |
 | 被拒绝的更新 | **一个字节都不写**：不存在「写了一半」的状态 |
+
+### 图片的缓存：`no-cache` + ETag，**不是** `no-store`
+
+图片是一条**常量**：200 KB，永远不变（换图 = 重新构建 = 重启）。所以它和状态 JSON 的缓存策略必须相反：
+
+| 路由 | 缓存头 | 为什么 |
+| --- | --- | --- |
+| `status.json` / `state.json` / 任何失败响应 | `no-store` | 它回答「现在是什么样」，缓存一份就等于缓存一个谎言 |
+| **`assets/skins/<id>.png`（成功）** | **`no-cache` + 强 `ETag`** | 「留着，但每次问一下」：没变就是一次 **304**（无 body），变了才下载一次 |
+| 图片路径下的任何 404 | `no-store` | 一个没有缓存指令的 404 会被启发式缓存，写错一次就一直 404 |
+
+用 `no-store` 的后果很具体：**每次页面加载都重新下载 200 KB**。
+`no-cache` 不是「不缓存」，而是「用之前先验证」—— 这正是 ETag 存在的意义。
+
+`ETag` 是图片**内容的 SHA-256**（强校验，带引号），不是修改时间：
+重启进程、重新克隆仓库都不会让它变，只有图片真的换了才会变。
+`If-None-Match` 命中返回 `304` 且**没有 body**；`*` 也匹配；而一个过期的或弱校验（`W/"..."`）的值**不会**被当成命中 ——
+否则换了图也永远发不出去。
 
 ## 设计：为什么用动态注入，为什么禁止静态 `inject`
 
@@ -282,7 +333,12 @@ node scripts/build.mjs
 没有 tsdown、没有 TypeScript、没有 `npm install`，`package.json` 里也没有 `devDependencies` ——
 因为 `factory` 只拿到 `require`，整个浏览器半边本来就必须是一个文件，打包器在这里无事可做。
 
-改桌宠的样子，就是改 `src/client/index.js` 里那段模板字符串和那个 SVG，然后重新构建。
+换桌宠的画面，就是替换 `assets/skins/<id>.png`（保持文件名；显示宽度由 `PET_WIDTH` 控制），
+然后重新构建 —— 构建会把 `assets/skins/*.png` 复制到 `lib/assets/skins/` 并记录进清单。
+
+**新增一种皮肤**要同时动三处，否则构建会拒绝：
+`assets/skins/<id>.png`（文件）、`src/host/index.js` 的 `SKIN_IDS`、`src/client/index.js` 的
+`SKIN_IDS` + `SKIN_LABELS` + 一个色块颜色。这是有意的：三处不一致就会发一个点不开的色块。
 
 ## 校验
 
@@ -305,8 +361,11 @@ node scripts/verify-pet.mjs           # 桌宠的纯函数：夹取、姿态、�
   `createElement` 返回 `null`，所以「画出来是什么样」没人测过。
 - **拖动、指针事件、触摸也没被验证过**：那些需要真实的 DOM。被验证的是**决策**（夹取、姿态、台词选择），
   以及座位、样式表、待机、卸载这些不依赖渲染的部分。
-- 桌宠是 **SVG + CSS**：没有图片、没有视频、没有网络请求，也没有声音。
-- 视觉细节（鲸鱼的具体形状、动画节奏）是**作者的设计选择**，没有经过用研。
+- 桌宠是 **一张 PNG + CSS**：没有视频、没有第三方请求，也没有声音。
+- **画面不是本项目原创**：它带有 "OleapCrow" 的画师标记，由仓库所有者提供，授权情况见 `LICENSE`。
+  八种皮肤是同一张画的**派生配色**（按区域调整色相/饱和度/明度，并把浅色布料与杯子做乘性着色），
+  不是八张独立绘制的作品。
+  动画节奏（浮动 / 摇摆 / 呼吸的周期）是本项目的设计选择，没有经过用研。
 
 ## 文件一览
 
@@ -314,16 +373,18 @@ node scripts/verify-pet.mjs           # 桌宠的纯函数：夹取、姿态、�
 package.json                    清单：dsh.bundle + dsh.client + exports（无 devDependencies）
 cordis.patch.yml                让包成为配置层的 insert 行
 src/host/index.js               宿主半边：status + 状态读写（严格校验、原子写、自愈）
-src/client/index.js             浏览器半边：唯一源文件（加载器信封 + SVG + 样式表 + 纯函数）
+src/client/index.js             浏览器半边：唯一源文件（加载器信封 + <img> + 样式表 + 纯函数）
+assets/skins/<id>.png           八张皮肤（源，420x409，随包分发；由宿主半边提供）
 lib/index.js                    生成的一行垫片（main / exports 指向它）
 lib/host/index.js               宿主半边的产物
 lib/client.js                   浏览器半边产物（= src/client/index.js + 生成横幅，无静态 inject）
+lib/assets/skins/<id>.png       皮肤产物（= assets/skins/，逐字节复制；build 会清理陈旧文件）
 lib/types/*.d.ts                类型声明
 lib/.build-manifest.json        lib/ 里到底有什么
 scripts/                        构建 + 六个校验脚本
 submission/data/plugins/...     市场提交文件
 ARCHITECTURE.md                 接线约定的「是什么 + 为什么」
-CHANGELOG.md                    0.1.0：第一版桌宠
+CHANGELOG.md                    0.3.0：八种配色皮肤
 ```
 
 ## 许可

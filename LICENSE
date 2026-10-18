@@ -30,8 +30,15 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ---
 
-Note on the pet: the visual content shipped in `lib/client.js` is a small
-whale drawn with inline SVG and CSS. It is an original drawing of this project,
-it is not a DeepSeek asset, and it is not official branding. This package
-contains no third-party video, image, font or audio assets, and fetches nothing
-at runtime. The pet carries no licence obligations beyond the terms above.
+Note on the artwork: the pet images shipped in `lib/assets/skins/` (the sources
+are `assets/skins/<id>.png`, eight 420x409 PNGs) are NOT original drawings of this
+project. All eight are derived from ONE drawing — the eight differ only in colour,
+produced by per-region hue/saturation/value changes on the coloured areas and a
+multiplicative tint on the pale ones.
+It carries an "OleapCrow" artist mark and was supplied by the repository owner.
+Licence situation: supplied by the repository owner; see LICENSE (this file).
+
+That image is not a DeepSeek asset and is not official DeepSeek branding. Apart
+from it, this package contains no third-party video, font or audio assets, and it
+fetches nothing from a third-party host at runtime: the image, the client bundle
+and every request stay on the DSH server this plugin is installed into.

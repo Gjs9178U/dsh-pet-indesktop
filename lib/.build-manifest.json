@@ -1,15 +1,26 @@
 {
-  "builtAt": "2026-10-16T02:10:11.407Z",
-  "generator": "scripts/build.mjs (host copy + client copy with banner + manifest)",
+  "builtAt": "2026-10-18T06:36:50.715Z",
+  "generator": "scripts/build.mjs (host copy + client copy with banner + skin copy + manifest)",
   "host": [
     "index.js"
   ],
   "client": [
     "client.js"
   ],
+  "skins": [
+    "caramel",
+    "deepsea",
+    "ember",
+    "ink",
+    "mint",
+    "sakura",
+    "silver",
+    "twilight"
+  ],
+  "skinsBytes": 1641198,
   "types": [
     "types/index.d.ts",
     "types/client/index.d.ts"
   ],
-  "clientBundleBytes": 43121
+  "clientBundleBytes": 52890
 }

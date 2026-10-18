@@ -1,7 +1,7 @@
 {
   "name": "dsh-pet-indesktop",
-  "version": "0.1.0",
-  "description": "给 DSH 网页界面加一只会呼吸、会眨眼、能拖动、能记住位置的桌宠（纯 SVG + CSS，无外部素材、无网络请求）。A draggable desktop pet for the DSH web GUI: inline SVG and CSS only, no assets and no network, whose position survives a reload.",
+  "version": "0.3.0",
+  "description": "给 DSH 网页界面加一只叫「大肥鱼」的桌宠，八种配色皮肤可以随时切换（深海蓝 / 樱花粉 / 薄荷绿 / 暮光紫 / 焦糖金 / 雪白银 / 墨黑 / 余烬红）：它会上下浮动、左右摇摆、缓慢呼吸，记得你把它放在哪，点一下会说一句中英双语的话，还能拖到任意位置。画面是八张随插件分发的 PNG，由插件自己提供。A desktop pet called \"Big Fat Fish\" (大肥鱼) for the DSH web GUI, with eight switchable colour skins (deepsea, sakura, mint, twilight, caramel, silver, ink, ember): it bobs, sways and slowly breathes, remembers where you left it, says one bilingual line when clicked, and can be dragged anywhere. The eight images are PNGs bundled with the plugin and served by the plugin itself.",
   "type": "module",
   "main": "./lib/index.js",
   "types": "./lib/types/index.d.ts",

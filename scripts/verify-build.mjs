@@ -22,7 +22,7 @@
  *
  * Usage: node scripts/verify-build.mjs
  */
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -45,6 +45,11 @@ const REQUIRED = [
   'lib/client.js',
   'lib/types/index.d.ts',
   'lib/types/client/index.d.ts',
+  'lib/assets/skins/deepsea.png',
+  'lib/assets/skins/sakura.png',
+  'lib/assets/skins/mint.png',
+  'lib/assets/skins/twilight.png',
+  'lib/assets/skins/caramel.png',
   'lib/.build-manifest.json',
   'cordis.patch.yml',
   'package.json',
@@ -160,7 +165,7 @@ console.log('\npackage.json — an installable DSH plugin:')
 {
   const pkg = JSON.parse(read('package.json'))
   check(pkg.name === 'dsh-pet-indesktop', `name is dsh-pet-indesktop (got ${String(pkg.name)})`)
-  check(pkg.version === '0.1.0', `version is 0.1.0 (got ${String(pkg.version)})`)
+  check(pkg.version === '0.3.0', `version is 0.3.0, the skins release (got ${String(pkg.version)})`)
   check(pkg.type === 'module', 'type is module')
   check(pkg.license === 'BSD-3-Clause', `license is BSD-3-Clause (got ${String(pkg.license)})`)
   check(pkg.author === 'Gjs9178U', `author is Gjs9178U (got ${String(pkg.author)})`)
@@ -228,6 +233,102 @@ console.log('\npackage.json — an installable DSH plugin:')
   )
 }
 
+console.log('\nthe skins:')
+{
+  /**
+   * The skin files are the feature now, so each one gets the same treatment the
+   * bundle does: the shipped copy must equal the source copy, byte for byte, and it
+   * must actually be a PNG. The magic-bytes check is what catches a placeholder text
+   * file committed under a .png name — a failure that would otherwise only show up
+   * as a broken picture in a browser nothing here can open.
+   */
+  const EXPECTED = ['deepsea', 'sakura', 'mint', 'twilight', 'caramel', 'silver', 'ink', 'ember']
+  const sourceIds = readdirSync(fileAt('assets/skins'))
+    .filter((name) => name.endsWith('.png'))
+    .map((name) => name.slice(0, -4))
+    .sort()
+  const shippedIds = readdirSync(fileAt('lib/assets/skins'))
+    .filter((name) => name.endsWith('.png'))
+    .map((name) => name.slice(0, -4))
+    .sort()
+
+  check(
+    JSON.stringify(sourceIds) === JSON.stringify([...EXPECTED].sort()),
+    `assets/skins/ holds exactly the eight known skins (got ${sourceIds.join(', ') || 'nothing'})`,
+  )
+  check(
+    JSON.stringify(shippedIds) === JSON.stringify(sourceIds),
+    `lib/assets/skins/ holds exactly what assets/skins/ holds (got ${shippedIds.join(', ') || 'nothing'})`,
+  )
+  // Nothing may linger directly in lib/assets: the layout moved once, and the file
+  // that was left behind was a 200 KB stale copy.
+  const flat = readdirSync(fileAt('lib/assets')).filter((name) => name.endsWith('.png'))
+  check(flat.length === 0, `lib/assets/ holds no stale flat PNGs (got ${flat.join(', ') || 'none'})`)
+
+  for (const id of sourceIds) {
+    const source = readFileSync(fileAt(`assets/skins/${id}.png`))
+    const shipped = readFileSync(fileAt(`lib/assets/skins/${id}.png`))
+    check(shipped.equals(source), `lib/assets/skins/${id}.png is byte-identical to assets/skins/${id}.png`)
+    check(
+      shipped.length > 8 && shipped.subarray(0, 8).toString('hex') === '89504e470d0a1a0a',
+      `${id}.png starts with the PNG magic bytes (got ${shipped.subarray(0, 8).toString('hex')})`,
+    )
+    // 8-byte signature + IHDR: width and height sit at fixed offsets.
+    const width = shipped.readUInt32BE(16)
+    const height = shipped.readUInt32BE(20)
+    check(width === 420 && height === 409, `${id}.png is 420x409 (got ${String(width)}x${String(height)})`)
+    check(shipped.length > 50 * 1024, `${id}.png is a real image, not a placeholder (${String(shipped.length)} bytes)`)
+  }
+
+  // The client's allow-list must match the directory EXACTLY, in both directions:
+  // a file with no id is unreachable, and an id with no file is a broken swatch.
+  const bundle = read('lib/client.js')
+  const idsRaw = /const SKIN_IDS = Object\.freeze\(\[([^\]]+)\]\)/.exec(bundle)?.[1] ?? null
+  const clientIds = idsRaw === null ? null : [...idsRaw.matchAll(/'([^']+)'/g)].map((match) => match[1])
+  check(clientIds !== null, 'lib/client.js declares a SKIN_IDS allow-list')
+  if (clientIds !== null) {
+    check(
+      JSON.stringify([...clientIds].sort()) === JSON.stringify(sourceIds),
+      `the client's skin list matches the directory exactly (client: ${clientIds.join(', ')} | files: ${sourceIds.join(', ')})`,
+    )
+    check(new Set(clientIds).size === clientIds.length, 'the client skin list has no duplicates')
+  }
+
+  const host = read('lib/host/index.js')
+  const hostIdsRaw = /const SKIN_IDS = Object\.freeze\(\[([^\]]+)\]\)/.exec(host)?.[1] ?? null
+  const hostIds = hostIdsRaw === null ? null : [...hostIdsRaw.matchAll(/'([^']+)'/g)].map((match) => match[1])
+  check(
+    hostIds !== null && JSON.stringify([...hostIds].sort()) === JSON.stringify(sourceIds),
+    `the host's allow-list matches the directory exactly (host: ${String(hostIds?.join(', '))})`,
+  )
+
+  // The client's URL prefix and the host's route must describe the same address.
+  const clientPrefix = /const SKIN_URL_PREFIX = '([^']+)'/.exec(bundle)?.[1] ?? null
+  check(
+    clientPrefix === '/dsh-pet-indesktop/assets/skins',
+    `the client builds skin URLs under /dsh-pet-indesktop/assets/skins (got ${String(clientPrefix)})`,
+  )
+  check(
+    host.includes(`const SKIN_DIR = 'skins'`) && host.includes(`const ASSET_DIR = 'assets'`),
+    'the host serves the same directory the client asks for',
+  )
+  check(
+    /const DEFAULT_SKIN = '([^']+)'/.exec(bundle)?.[1] === /const DEFAULT_SKIN = '([^']+)'/.exec(host)?.[1],
+    'the client and the host agree on the default skin',
+  )
+  // The URL is built from an id, never from a stored or requested string: the img's
+  // src must be `skinUrl(resolveSkin(...))`, so an unknown value cannot reach it.
+  check(
+    /src: skinUrl\(resolveSkin\(props\.skin\)\)/.test(bundle),
+    "the <img> src goes through skinUrl(resolveSkin(...)) — never a raw value",
+  )
+  check(!/src: \s*props\.skin/.test(bundle), 'the <img> src is never the raw skin value')
+
+  // The package must say what it is: a release that changed the looks has to name
+  // them in its description, or the market listing describes the old plugin.
+  check(/skin/i.test(String(JSON.parse(read('package.json')).description)), 'the package description mentions skins')
+}
+
 console.log('\nthe build manifest:')
 {
   const manifest = JSON.parse(read('lib/.build-manifest.json'))
@@ -235,6 +336,18 @@ console.log('\nthe build manifest:')
   check(
     Array.isArray(manifest.client) && manifest.client.length === 1 && manifest.client[0] === 'client.js',
     `the manifest lists exactly one client artifact (got ${JSON.stringify(manifest.client)})`,
+  )
+  check(
+    Array.isArray(manifest.skins) && manifest.skins.length === 8 && manifest.skins.includes('deepsea'),
+    `the manifest lists all eight skins (got ${JSON.stringify(manifest.skins)})`,
+  )
+  const skinBytes = readdirSync(fileAt('lib/assets/skins')).reduce(
+    (total, name) => total + statSync(fileAt(`lib/assets/skins/${name}`)).size,
+    0,
+  )
+  check(
+    typeof manifest.skinsBytes === 'number' && manifest.skinsBytes === skinBytes,
+    `the manifest records the real total skin size (got ${String(manifest.skinsBytes)}, want ${String(skinBytes)})`,
   )
   check(typeof manifest.builtAt === 'string', 'the manifest records when it was built')
   check(typeof manifest.generator === 'string', 'the manifest records its generator')

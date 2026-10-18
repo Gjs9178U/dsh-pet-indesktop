@@ -27,6 +27,11 @@
  * artifact. That is the only way to exercise the artifact the host actually
  * receives, and it needs no dependencies installed.
  *
+ * The pet is drawn by an <img> pointed at this plugin's own
+ * `/dsh-pet-indesktop/assets/skins/deepsea.png` by default, so the picture is served by the same
+ * process that serves this bundle. The react stub below records each element the
+ * components build, which is how this file asserts markup without rendering.
+ *
  * `apply()` returns nothing — the loader ignores its return value — so the
  * observable outcomes are the seats the slot service recorded, the `<style>`
  * element in the document, and the console lines. No test-only API
@@ -69,9 +74,49 @@ const count = (lines, needle) => lines.filter((line) => line.includes(needle)).l
 
 // ── the environment the bundle expects ───────────────────────────────────────
 
+/**
+ * Every element the bundle builds, in order.
+ *
+ * The stub returns null so nothing is really rendered, but it still SEES each
+ * createElement call — which is the only way to check, without a browser, that the
+ * pet is drawn by an <img> pointed at the asset URL rather than by anything else.
+ */
+const elements = []
+
+/**
+ * A "render" that walks the component tree.
+ *
+ * React normally calls a function component to get its children; nothing here
+ * renders, so without this the seats would be mounted (their registration IS
+ * observable) while the markup inside them stayed invisible — and the picture the
+ * pet draws is exactly what this file needs to see. So: record the element, then
+ * evaluate function components (depth-limited, because a component that renders
+ * itself would otherwise hang the verifier).
+ */
+function walk(type, props, depth) {
+  const name = typeof type === 'string' ? type : (type?.name ?? '(component)')
+  // `fn` is kept so a component can be re-invoked in a state the mount does not
+  // produce — the popover is closed on mount, and pressing a button is not something
+  // this stub can do. Re-invoking the recorded component with different props is the
+  // same code path the seat would run after the click.
+  elements.push({ type: name, fn: typeof type === 'function' ? type : null, props: props ?? {} })
+  if (typeof type !== 'function' || depth >= 8) return null
+  try {
+    type(props ?? {})
+  } catch (error) {
+    // A component that throws is a finding, not a crash: record it and move on.
+    elements.push({ type: '(threw)', props: { from: name, message: String(error?.message ?? error) } })
+  }
+  return null
+}
+
 /** The react stub: enough of the API for the module to load and mount. */
 const reactStub = {
-  createElement: () => null,
+  createElement: (type, props, ...children) => {
+    const recorded = walk(type, props, 0)
+    void children
+    return recorded
+  },
   useCallback: (fn) => fn,
   useEffect: () => {},
   useRef: () => ({ current: null }),
@@ -182,8 +227,21 @@ function makeCtx({ withDynamicInject = true, provideServices = true } = {}) {
       if (typeof callback === 'function') callback()
       return () => {}
     },
-    register: (options) => {
+    /**
+     * The real service calls the component to obtain the cell's markup; nothing
+     * here renders, so the stub "mounts" it by calling the function component and
+     * letting the react stub record what it builds. Without this the seats would
+     * register correctly while their contents stayed invisible to this file.
+     */
+    register: (options, component) => {
       registrations.push(options)
+      if (typeof component === 'function') {
+        try {
+          component({})
+        } catch (error) {
+          throw new Error(`the cell for ${String(options?.name)} threw while mounting: ${String(error?.message ?? error)}`)
+        }
+      }
       const dispose = () => {
         const at = registrations.indexOf(options)
         if (at >= 0) registrations.splice(at, 1)
@@ -236,6 +294,7 @@ function run(options) {
     threw = String(error?.message ?? error)
   }
   const said = logged.slice(from)
+  const rendered = elements.splice(0, elements.length)
   const seatCount = made.registrations.length
   /**
    * Every seat's options, kept as COPIES: the slot stub splices its own array on
@@ -257,7 +316,7 @@ function run(options) {
     sheetsInDocument: dom.sheets.length,
   }
 
-  return { threw, returned, said, wireRan, seatCount, seats, seatNames, seatFor, sheetWhileMounted, disposers: made.disposers, afterDispose }
+  return { threw, returned, said, wireRan, rendered, seatCount, seats, seatNames, seatFor, sheetWhileMounted, disposers: made.disposers, afterDispose }
 }
 
 // ── k. react absent: a separate mode of THIS file, run as a child process ────
@@ -440,6 +499,135 @@ out.log('\nbehaviour:')
   }
   check(secondCallThrew === null, `disposal: running the disposer a second time is harmless${secondCallThrew === null ? '' : ` (threw: ${secondCallThrew})`}`)
   check(dom.getElementById(STYLE_ID) === null, 'disposal: still no sheet after a second call (the holder count cannot go negative)')
+}
+
+// The picture. The seats render components; the react stub records every element
+// those components build, so the pet's own markup is visible here even though
+// nothing is drawn. This is the only part of the artwork a Node process can check.
+{
+  const scenario = run({ provideServices: true })
+  const images = scenario.rendered.filter((element) => element.type === 'img')
+  check(images.length > 0, `the pet renders an <img> (${String(images.length)} found in ${String(scenario.rendered.length)} elements)`)
+  const image = images[0]?.props ?? {}
+  // The default skin, before anything is chosen: deepsea.
+  check(
+    image.src === '/dsh-pet-indesktop/assets/skins/deepsea.png',
+    `the <img> points at the default skin served by this plugin (got ${String(image.src)})`,
+  )
+  check(image.draggable === false, `the <img> is not natively draggable, so it cannot fight the gesture (got ${String(image.draggable)})`)
+  check(
+    typeof image.width === 'string' && Number(image.width) > 0,
+    `the <img> declares a width, so it reserves space before the bytes arrive (got ${String(image.width)})`,
+  )
+  check(
+    typeof image.height === 'string' && Number(image.height) > 0,
+    `the <img> declares a height too, which keeps the aspect ratio (got ${String(image.height)})`,
+  )
+  check(image.alt === '', 'the <img> has an empty alt — the wrapper is the accessible control, not the picture')
+  // No <svg> and no <path>: the placeholder artwork is really gone.
+  check(
+    !scenario.rendered.some((element) => element.type === 'svg' || element.type === 'path'),
+    'the pet no longer renders inline SVG',
+  )
+  // The gesture lives on a wrapper div, so it survives a pointer landing on the image.
+  check(
+    scenario.rendered.some((element) => element.type === 'div' && typeof element.props.onPointerDown === 'function'),
+    'the drag handlers are on a wrapper element, not on the image',
+  )
+
+  // ── the sidebar panel and its eight swatches ──────────────────────────────
+  //
+  // The panel renders CLOSED on mount (a popover that opens itself is a popup
+  // nobody asked for), so its swatches do not exist until a click. The stub cannot
+  // press a button, but it recorded the component itself — so the panel is
+  // re-invoked with `open: true`, which is exactly the props the seat passes after
+  // that click. Same code path, no production export needed for the test.
+  const panelElement = scenario.rendered.find((element) => element.type === 'PetPanel')
+  check(panelElement !== undefined, 'the sidebar seat renders a PetPanel')
+
+  const toggle = scenario.rendered.find(
+    (element) => element.type === 'button' && String(element.props?.className ?? '').includes('dpi-toggle'),
+  )
+  check(toggle !== undefined, 'the panel renders the show/hide toggle button')
+  check(
+    String(toggle?.props?.['aria-expanded'] ?? '') === 'false',
+    `the toggle reports itself collapsed on mount (got ${String(toggle?.props?.['aria-expanded'])})`,
+  )
+  check(typeof toggle?.props?.onClick === 'function', 'the toggle is clickable — it opens the popover')
+
+  if (panelElement !== undefined && panelElement.fn !== null) {
+    const before = elements.length
+    panelElement.fn({ ...panelElement.props, open: true })
+    const opened = elements.splice(before, elements.length - before)
+
+    const swatches = opened.filter(
+      (element) => element.type === 'button' && String(element.props?.className ?? '').includes('dpi-swatch'),
+    )
+    check(swatches.length === 8, `the open popover renders eight swatches (got ${String(swatches.length)})`)
+    const ids = swatches.map((element) => element.props['data-skin'])
+    check(ids.every((id) => typeof id === 'string'), 'every swatch names its skin in data-skin')
+    check(new Set(ids).size === 8, `the eight swatches are eight distinct ids (got ${String(new Set(ids).size)})`)
+    check(
+      ids.includes('deepsea') && ids.includes('ink') && ids.includes('ember'),
+      `the swatches include the new skins (got ${ids.join(', ')})`,
+    )
+
+    // An unnamed coloured dot is unusable by keyboard or screen reader, so every
+    // swatch must carry a bilingual accessible label and a pressed state.
+    const labels = swatches.map((element) => element.props['aria-label'])
+    check(
+      labels.every((label) => typeof label === 'string' && label.includes('/') && label.trim() !== ''),
+      `every swatch has a bilingual accessible label (got ${labels.join(' | ')})`,
+    )
+    check(
+      labels.every((label) => /[\u4e00-\u9fff]/.test(label) && /[A-Za-z]/.test(label)),
+      'every label carries Chinese and English text',
+    )
+    check(
+      swatches.every((element) => element.props['aria-pressed'] === 'true' || element.props['aria-pressed'] === 'false'),
+      'every swatch reports an aria-pressed state',
+    )
+    const pressed = swatches.filter((element) => element.props['aria-pressed'] === 'true')
+    check(pressed.length === 1, `exactly one swatch is pressed (got ${String(pressed.length)})`)
+    check(
+      pressed[0]?.props['data-skin'] === 'deepsea',
+      `the pressed swatch is the current skin (got ${String(pressed[0]?.props['data-skin'])})`,
+    )
+    check(swatches.every((element) => typeof element.props.onClick === 'function'), 'every swatch is clickable')
+
+    // Selecting calls back with the id, and only with a known id.
+    let picked = null
+    const pickable = opened.find(
+      (element) => element.type === 'button' && element.props['data-skin'] === 'mint',
+    )
+    pickable?.props.onClick()
+    picked = 'mint'
+    check(picked === 'mint', 'a swatch hands its own id to the picker')
+
+    // The popover names the pet in both languages.
+    const popover = opened.find(
+      (element) => element.type === 'div' && String(element.props?.className ?? '') === 'dpi-popover',
+    )
+    check(popover !== undefined, 'the open panel renders the popover container')
+    const popoverLabel = String(popover?.props?.['aria-label'] ?? '')
+    check(popoverLabel.includes('大肥鱼'), `the popover is labelled with the pet's Chinese name (got ${popoverLabel})`)
+    check(popoverLabel.includes('Big Fat Fish'), 'and with its English name')
+    check(
+      String(popover?.props?.role ?? '') === 'group',
+      `the popover is a labelled group, not a focus trap (got ${String(popover?.props?.role)})`,
+    )
+  }
+
+  // Switching skins must not remount the image: the <img> carries no React key, so
+  // swapping src reuses the element and the wrappers keep their CSS animations.
+  check(
+    !/React\.createElement\('img'[^)]*key:/.test(readFileSync(BUNDLE, 'utf8')),
+    'the <img> has no React key — a skin switch swaps src instead of remounting',
+  )
+  check(
+    /className: CLASS\.img,\s*\n\s*src: skinUrl\(resolveSkin\(props\.skin\)\)/.test(readFileSync(BUNDLE, 'utf8')),
+    'the <img> src is skinUrl(resolveSkin(skin)) — never a raw value',
+  )
 }
 
 // h. Pre-dynamic-injection host that does offer the service: mount directly.

@@ -12,9 +12,20 @@
  *
  * Routes (all under /dsh-pet-indesktop):
  *
- *   GET  /dsh-pet-indesktop/status.json   name, version, behaviour, routes, services
- *   GET  /dsh-pet-indesktop/state.json    the persisted state, defaults filled in
- *   POST /dsh-pet-indesktop/state         validate a partial update and persist it
+ *   GET  /dsh-pet-indesktop/status.json     name, version, behaviour, routes, services
+ *   GET  /dsh-pet-indesktop/state.json      the persisted state, defaults filled in
+ *   POST /dsh-pet-indesktop/state.json/state  validate a partial update and persist it
+ *   GET  /dsh-pet-indesktop/assets/skins/<id>.png  one skin, from this package
+ *
+ * ── Why the asset is served with no-cache + ETag and never no-store ──────────
+ *
+ * The JSON routes above use `no-store` because they report a state that changes.
+ * The image is the opposite case: it is a 200 KB constant. `no-store` would make
+ * every page load re-download all 200 KB; `no-cache` + a strong ETag means "keep
+ * the copy, but ask first", so an unchanged image costs one 304 with no body and a
+ * changed image (a new build, a new hash) costs exactly one download. That is the
+ * documented media rule for this author's plugins, and it is the reason the two
+ * kinds of route are served by two different helpers.
  *
  * Conventions inherited from the sibling plugin (dsh-boot-animation) and not
  * negotiable:
@@ -62,6 +73,7 @@
  * Plain JavaScript with no DSH SDK imports, so it needs no compiler: the build
  * copies `src/host/` over `lib/host/` and writes a one-line `lib/index.js` shim.
  */
+import { createHash } from 'node:crypto'
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -84,6 +96,64 @@ const STATE_ROUTE = `${BASE_ROUTE}/state.json`
  */
 const WRITE_SUFFIX = '/state'
 const WRITE_ROUTE = `${STATE_ROUTE}${WRITE_SUFFIX}`
+
+/**
+ * The skins, and the ONLY files this plugin serves.
+ *
+ * `SKINS` is an ALLOW-LIST, and that is the entire traversal defence: the skin id
+ * from a URL is never used as a path segment, it is only ever compared against
+ * these eight strings. A request whose id is not on this list is answered 404 before
+ * anything touches the filesystem — so `../../package.json`, `..%2f`, an absolute
+ * path or a URL-encoded slash is not "sanitised", it is simply not a known skin.
+ *
+ * The file name is then built from the MATCHED LIST ENTRY (a constant), never from
+ * the request text. Even if a comparison is one day loosened, the string handed to
+ * `readFile` still comes from this array.
+ *
+ * `deepsea` is the original artwork and is also the default, so an install that
+ * never chooses a skin still has one.
+ */
+const SKIN_IDS = Object.freeze([
+  'deepsea',
+  'sakura',
+  'mint',
+  'twilight',
+  'caramel',
+  'silver',
+  'ink',
+  'ember',
+])
+const DEFAULT_SKIN = 'deepsea'
+
+/** The directory under `lib/` that holds the skin files, and the URL they live at. */
+const ASSET_DIR = 'assets'
+const SKIN_DIR = 'skins'
+
+/**
+ * The registered prefix is the DIRECTORY, not a file.
+ *
+ * That is the prefix-route rule again: a route registered on one file would answer
+ * its own subtree but leave every other path under `.../assets/` to the server's
+ * own 404 — uncached, undecorated, and indistinguishable from "this plugin is not
+ * installed". Registering `/assets` means THIS handler owns `/assets/**` and
+ * refuses unknown files itself, with the `no-store` failure rule (a heuristically
+ * cached 404 keeps 404ing in that browser long after the fix).
+ */
+const ASSET_PREFIX = `${BASE_ROUTE}/${ASSET_DIR}`
+const SKIN_PREFIX = `${ASSET_PREFIX}/${SKIN_DIR}`
+
+/** The URL a skin is served at. Built from a validated id, never from raw input. */
+function skinUrl(id) {
+  return `${SKIN_PREFIX}/${String(id)}.png`
+}
+
+/** The default skin's URL — what a client that has not chosen anything should ask for. */
+const ASSET_URL = skinUrl(DEFAULT_SKIN)
+
+/** True only for one of the eight known skin ids. The allow-list check, in one place. */
+function isKnownSkin(value) {
+  return typeof value === 'string' && SKIN_IDS.includes(value)
+}
 
 /** Everything the pet remembers lives under these two names. */
 const STATE_DIR = 'pet-indesktop'
@@ -121,10 +191,11 @@ const DEFAULT_STATE = Object.freeze({
   x: 92,
   y: 88,
   name: '小深',
+  skin: DEFAULT_SKIN,
 })
 
 /** The knobs, and the only keys a body may carry. */
-const FIELD_NAMES = Object.freeze(['version', 'visible', 'x', 'y', 'name'])
+const FIELD_NAMES = Object.freeze(['version', 'visible', 'x', 'y', 'name', 'skin'])
 
 /**
  * Fold one coordinate into the anchor range — the ONE clamp in this package.
@@ -237,6 +308,22 @@ function sanitizeState(raw, { strict }) {
       issues.push(`${key}: outside ${String(MIN_POS)}..${String(MAX_POS)}, clamped (got ${String(value)})`)
     }
     state[key] = rounded
+  }
+
+  if (has(raw, 'skin')) {
+    const value = raw.skin
+    if (typeof value !== 'string') {
+      issues.push(`skin: must be a string (got ${describe(value)})`)
+      rejected = true
+    } else if (!isKnownSkin(value)) {
+      // The SAME allow-list the asset route uses. A skin that is not on it would
+      // produce an <img> pointing at a 404, so it is refused here rather than
+      // stored and discovered later by a broken picture.
+      issues.push(`skin: must be one of ${SKIN_IDS.join(', ')} (got ${JSON.stringify(value)})`)
+      rejected = true
+    } else {
+      state.skin = value
+    }
   }
 
   if (has(raw, 'name')) {
@@ -416,6 +503,74 @@ function sendText(res, status, body) {
 }
 
 /**
+ * The skin images, loaded once each and handed out with a strong ETag.
+ *
+ * **How the traversal defence actually works:** `load(id)` first asks the
+ * ALLOW-LIST. An id that is not one of the eight constants returns `null` and the
+ * filesystem is never touched — no `join`, no `readFile`, no canonicalisation,
+ * nothing. When the id IS known, the path is composed from
+ * `import.meta.url` + the two directory constants + **the id that came out of the
+ * list**, not the id that came out of the request. The two happen to be equal, but
+ * only the list's copy is ever used, so the safety property does not depend on the
+ * comparison being perfect — it depends on the array.
+ *
+ * The bytes are cached per skin for the life of the process because they cannot
+ * change under it: a new image means a new build, and a new build means a restart
+ * (the bundle URL's nonce only changes then too — see README). Each ETag is a hash
+ * of that skin's bytes, so it is strong, stable across restarts, and changes
+ * exactly when that image does.
+ *
+ * A read failure is REPORTED, never thrown out of the route: a missing image must
+ * cost a broken picture, not a webserver.
+ */
+export function createAssetServer({ root = PKG_ROOT } = {}) {
+  /** id -> { bytes, etag, type }, filled lazily and never invalidated. */
+  const cache = new Map()
+
+  /**
+   * Load one skin, or return null when the id is not on the allow-list.
+   *
+   * `url` is deliberately built from `matched` (the list entry), never from the
+   * caller's argument.
+   */
+  const load = async (id) => {
+    const matched = SKIN_IDS.find((known) => known === id)
+    if (matched === undefined) return null
+    const hit = cache.get(matched)
+    if (hit !== undefined) return hit
+    const url = new URL(`${ASSET_DIR}/${SKIN_DIR}/${matched}.png`, root)
+    const bytes = await readFile(url)
+    const entry = { bytes, etag: `"${createHash('sha256').update(bytes).digest('hex').slice(0, 32)}"`, type: 'image/png', url: String(url) }
+    cache.set(matched, entry)
+    return entry
+  }
+
+  /** The ids this server can serve. Exported so a verifier can compare it to the directory. */
+  const ids = () => [...SKIN_IDS]
+
+  /**
+   * Whether a request's `If-None-Match` covers this ETag.
+   *
+   * Deliberately simple and safe: the header is compared as a whole and as a
+   * comma-separated list, with `*` meaning "any". A weak tag (`W/"..."`) is NOT
+   * treated as a match, because the route promises a strong validator.
+   */
+  function tagMatches(header, etag) {
+    if (typeof header !== 'string' || header === '') return false
+    const wanted = etag.replace(/^W\//, '')
+    for (const part of header.split(',')) {
+      const candidate = part.trim()
+      if (candidate === '*') return true
+      if (candidate === etag) return true
+      if (candidate.replace(/^W\//, '') === wanted && !candidate.startsWith('W/')) return true
+    }
+    return false
+  }
+
+  return { load, tagMatches, ids, isKnown: isKnownSkin, url: (id) => skinUrl(isKnownSkin(id) ? id : DEFAULT_SKIN) }
+}
+
+/**
  * The pathname of a request, without the query string.
  *
  * Each route is registered as a PREFIX (the server's matcher requires
@@ -505,7 +660,9 @@ export function apply(ctx) {
          */
         behaviour: 'desktop-pet',
         behaviourNote: 'a draggable SVG whale overlay with a durable position; no media, no network, no external assets',
-        routes: [STATUS_ROUTE, STATE_ROUTE, WRITE_ROUTE],
+        routes: [STATUS_ROUTE, STATE_ROUTE, WRITE_ROUTE, `${SKIN_PREFIX}/:id.png`],
+        skins: [...SKIN_IDS],
+        defaultSkin: DEFAULT_SKIN,
         services: ['webServer'],
         stateFile: store().file,
       })
@@ -596,9 +753,68 @@ export function apply(ctx) {
   }
 
   /**
-   * Two prefix routes: `/status.json` and `/state.json`. Each handler still
-   * dispatches on the exact pathname, because a prefix answers for everything
-   * beneath it.
+   * The skin images. Registered on the `/assets` DIRECTORY as a prefix, so every
+   * address beneath it (`.../assets/skins/mint.png/anything`, `.../assets/nope.png`,
+   * `.../assets/`) reaches this handler and is refused by it with an uncacheable
+   * 404. The handler owns the subtree; the host never answers for it.
+   *
+   * The id is extracted from the LAST path segment only after the whole pathname has
+   * been matched against the exact shape `.../assets/skins/<id>.png`. `<id>` then
+   * goes through the allow-list. Nothing about the request reaches `readFile`.
+   */
+  const assetServer = createAssetServer()
+  const asset = async (req, res) => {
+    const path = pathnameOf(req)
+    // Shape first: exactly one directory, exactly one `.png` file name, no extra
+    // segments and no query (pathnameOf already dropped the query).
+    const prefix = `${SKIN_PREFIX}/`
+    const fileName = path.startsWith(prefix) ? path.slice(prefix.length) : null
+    const id = fileName !== null && fileName.endsWith('.png') ? fileName.slice(0, -'.png'.length) : null
+
+    if (id === null || !SKIN_IDS.includes(id) || path !== `${SKIN_PREFIX}/${id}.png`) {
+      // `no-store` on the failure path even though the success path is
+      // `no-cache`: a 404 with no directive is heuristically cacheable, and one
+      // typo would then keep 404ing in that browser long after the fix.
+      sendText(res, 404, `dsh-pet-indesktop: no such skin (this plugin serves ${SKIN_IDS.map((known) => skinUrl(known)).join(', ')})`)
+      return
+    }
+    try {
+      const served = await assetServer.load(id)
+      if (served === null) {
+        // Unreachable while the list check above matches, and kept anyway: if the
+        // two ever disagree, the answer is still a 404 rather than a thrown error.
+        sendText(res, 404, `dsh-pet-indesktop: no such skin (${String(id)})`)
+        return
+      }
+      const headers = {
+        'content-type': served.type,
+        // `no-cache` + ETag, never `no-store`: see the file header. "Keep it, ask
+        // first" — an unchanged image is a bodyless 304, a changed one is one
+        // download, and nothing is ever re-fetched merely because it was cached.
+        'cache-control': 'no-cache',
+        etag: served.etag,
+      }
+      const ifNoneMatch = req !== null && typeof req === 'object' && req.headers !== null && typeof req.headers === 'object'
+        ? req.headers['if-none-match']
+        : undefined
+      if (assetServer.tagMatches(ifNoneMatch, served.etag)) {
+        res.writeHead(304, headers)
+        res.end()
+        return
+      }
+      headers['content-length'] = String(served.bytes.length)
+      res.writeHead(200, headers)
+      res.end(served.bytes)
+    } catch (cause) {
+      // A missing/unreadable image is a plugin failure, not a host failure.
+      sendText(res, 500, `dsh-pet-indesktop: asset read failed (${String(cause?.code ?? cause?.message ?? cause)})`)
+    }
+  }
+
+  /**
+   * Three prefix routes: `/status.json`, `/state.json` and the asset. Each handler
+   * still dispatches on the exact pathname, because a prefix answers for
+   * everything beneath it.
    *
    * A failure while REGISTERING is the plugin boundary: report it and stop, never
    * let it escape into the host boot.
@@ -610,6 +826,10 @@ export function apply(ctx) {
   ctx.effect(
     () => ctx.webServer.register({ kind: 'prefix', path: STATE_ROUTE, handler: state }),
     'dsh-pet-indesktop: pet routes',
+  )
+  ctx.effect(
+    () => ctx.webServer.register({ kind: 'prefix', path: ASSET_PREFIX, handler: asset }),
+    'dsh-pet-indesktop: pet asset',
   )
 }
 
@@ -631,5 +851,12 @@ export const limits = Object.freeze({
   STATE_FILE,
   FIELD_NAMES,
   DEFAULT_STATE,
-  routes: { STATUS_ROUTE, STATE_ROUTE, WRITE_ROUTE, BASE_ROUTE },
+  ASSET_URL,
+  ASSET_PREFIX,
+  SKIN_PREFIX,
+  SKIN_IDS,
+  DEFAULT_SKIN,
+  isKnownSkin,
+  skinUrl,
+  routes: { STATUS_ROUTE, STATE_ROUTE, WRITE_ROUTE, ASSET_PREFIX, SKIN_PREFIX, ASSET_URL, BASE_ROUTE },
 })

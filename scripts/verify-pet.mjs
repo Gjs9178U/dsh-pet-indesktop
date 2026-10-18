@@ -93,7 +93,7 @@ if (pet === null) {
   process.exit(2)
 }
 
-for (const name of ['clampPosition', 'clampPercent', 'nextPose', 'poseAt', 'stanceAt', 'pickLine', 'pickMode', 'blinkAt', 'swayAt', 'breathAt']) {
+for (const name of ['clampPosition', 'clampPercent', 'nextPose', 'poseAt', 'stanceAt', 'pickLine', 'pickMode', 'blinkAt', 'swayAt', 'breathAt', 'resolveSkin', 'skinUrl']) {
   if (typeof pet[name] !== 'function') {
     out.error(`verify-pet: the bundle does not export the pure function ${name}() — the matrix is not data any more`)
     process.exit(2)
@@ -423,6 +423,143 @@ out.log('\nthe speech bubble:')
 }
 
 // ── the two halves agree ─────────────────────────────────────────────────────
+
+out.log('\nthe skin allow-list — a valid id is kept, anything else becomes the default:')
+{
+  /**
+   * The skin id is the ONE input that reaches a URL, so it is the one place a bad
+   * value could do damage. `resolveSkin` is the gate: everything that renders a skin
+   * goes through it, so this section exhausts its input space rather than sampling it.
+   */
+  const ids = pet.SKIN_IDS
+  check(Array.isArray(ids) && ids.length === 8, `SKIN_IDS is the eight looks (got ${String(ids?.length)})`)
+  check(ids.includes(pet.DEFAULT_SKIN), `the default skin is on the list (got ${String(pet.DEFAULT_SKIN)})`)
+
+  // Every legitimate id is preserved EXACTLY — no trimming, no case folding, no
+  // coercion: an id is a key, not a path.
+  for (const id of ids) {
+    check(pet.resolveSkin(id) === id, `resolveSkin('${id}') keeps it`)
+  }
+
+  // A URL for a real id is the asset route, and the id is the only variable part.
+  for (const id of ids) {
+    const url = pet.skinUrl(id)
+    check(
+      url === `/dsh-pet-indesktop/assets/skins/${id}.png`,
+      `skinUrl('${id}') is the asset route (got ${String(url)})`,
+    )
+  }
+
+  // Everything else folds to the default. The traversal-shaped inputs matter most:
+  // they must never appear in a URL, because the URL is what the <img> loads.
+  const hostile = [
+    '../../package.json',
+    '..%2f..%2fpackage.json',
+    '../skins/deepsea',
+    'skins/deepsea',
+    'deepsea.png',
+    'DEEPSEA',
+    'Deepsea',
+    ' deepsea',
+    'deepsea ',
+    'deepsea\u0000.png',
+    '/etc/passwd',
+    '//etc/passwd',
+    'http://evil.invalid/x.png',
+    'javascript:alert(1)',
+    '',
+    ' ',
+    0,
+    1,
+    42,
+    NaN,
+    Infinity,
+    -1,
+    true,
+    false,
+    null,
+    undefined,
+    [],
+    ['deepsea'],
+    {},
+    { id: 'deepsea' },
+    () => 'deepsea',
+  ]
+  let bad = 0
+  for (const value of hostile) {
+    const resolved = pet.resolveSkin(value)
+    if (resolved !== pet.DEFAULT_SKIN) {
+      bad += 1
+      check(false, `resolveSkin(${JSON.stringify(value) ?? String(value)}) returned ${String(resolved)}, want ${pet.DEFAULT_SKIN}`)
+    }
+  }
+  check(bad === 0, `all ${String(hostile.length)} unknown/hostile skin values fold to the default (${String(bad)} leaked)`)
+
+  // The consequence that actually protects the browser: no hostile input can produce
+  // a URL with a traversal, a scheme, an extra segment or an encoded slash in it.
+  for (const value of hostile) {
+    const url = pet.skinUrl(pet.resolveSkin(value))
+    const ok =
+      url.startsWith('/dsh-pet-indesktop/assets/skins/') &&
+      !url.includes('..') &&
+      !url.includes('%') &&
+      !url.includes('\u0000') &&
+      !/^[a-z]+:/i.test(url) &&
+      url.split('/').length === 5 &&
+      url.endsWith('.png')
+    if (!ok) {
+      check(false, `the URL built from ${JSON.stringify(value) ?? String(value)} is unsafe (got ${String(url)})`)
+    }
+  }
+  check(true, 'every URL built from hostile input is a plain path under assets/skins/')
+
+  // The resolver is a pure function of its argument: same input, same output, and it
+  // does not mutate the list it reads from.
+  const before = [...pet.SKIN_IDS]
+  pet.resolveSkin('nope')
+  pet.resolveSkin('deepsea')
+  check(
+    JSON.stringify([...pet.SKIN_IDS]) === JSON.stringify(before),
+    'resolveSkin does not mutate the allow-list',
+  )
+  check(pet.resolveSkin('mint') === pet.resolveSkin('mint'), 'resolveSkin is deterministic')
+
+  // The labels exist for every id, in both languages: a swatch with no label would be
+  // an unnamed colour in the UI.
+  for (const id of ids) {
+    const label = pet.SKIN_LABELS?.[id]
+    check(label !== undefined, `${id} has a label entry`)
+    check(typeof label?.zh === 'string' && label.zh.trim() !== '', `${id}'s Chinese label is non-empty`)
+    check(typeof label?.en === 'string' && label.en.trim() !== '', `${id}'s English label is non-empty`)
+  }
+  check(
+    Object.keys(pet.SKIN_LABELS ?? {}).length === ids.length,
+    `there is exactly one label per skin (got ${String(Object.keys(pet.SKIN_LABELS ?? {}).length)} labels for ${String(ids.length)} skins)`,
+  )
+
+  // The pet's name is exported, in both languages, and it is the name the user asked
+  // for — the UI copy comes from here, so a typo would be visible.
+  check(pet.PET_NAME?.zh === '大肥鱼', `the pet's Chinese name is 大肥鱼 (got ${String(pet.PET_NAME?.zh)})`)
+  check(/Big Fat Fish/i.test(String(pet.PET_NAME?.en ?? '')), `the pet's English name is "Big Fat Fish" (got ${String(pet.PET_NAME?.en)})`)
+
+  // The client and the host must publish the same list. They cannot share code (the
+  // bundle has no imports), so the only defence against drift is this comparison.
+  const hostIds = hostLimits.SKIN_IDS
+  check(
+    Array.isArray(hostIds) && JSON.stringify([...hostIds].sort()) === JSON.stringify([...ids].sort()),
+    `the client and the host allow-lists are identical (client: ${[...ids].sort().join(', ')} | host: ${String(hostIds?.join(', '))})`,
+  )
+  check(
+    hostLimits.DEFAULT_SKIN === pet.DEFAULT_SKIN,
+    `the client and the host agree on the default skin (client ${String(pet.DEFAULT_SKIN)} | host ${String(hostLimits.DEFAULT_SKIN)})`,
+  )
+  check(
+    typeof hostLimits.isKnownSkin === 'function' &&
+      ids.every((id) => hostLimits.isKnownSkin(id)) &&
+      !hostLimits.isKnownSkin('nope'),
+    'the host exposes the same allow-list predicate, and it agrees on every id',
+  )
+}
 
 out.log('\nthe client and the host agree on every coordinate:')
 {
