@@ -202,8 +202,7 @@ window.__ModuleLoader__.load({
       ember: { zh: '余烬红', en: 'Ember' },
     })
 
-    /** The pet's own name, in both languages, for the UI copy. */
-    const PET_NAME = Object.freeze({ zh: '大肥鱼', en: 'Big Fat Fish' })
+    /** (PET_NAME / PET_NICK / the two call labels are declared with the copy table.) */
 
     /**
      * The drawn width, in CSS pixels, and the source's aspect ratio (420x409).
@@ -260,6 +259,9 @@ window.__ModuleLoader__.load({
       swatch: 'dpi-swatch',
       swatchOn: 'dpi-swatch-on',
       swatchDot: 'dpi-swatch-dot',
+      actions: 'dpi-actions',
+      action: 'dpi-action',
+      lazy: 'dpi-lazy',
     }
 
     // ── the stylesheet ───────────────────────────────────────────────────────
@@ -285,7 +287,10 @@ window.__ModuleLoader__.load({
 .dpi-pet{position:absolute;width:160px;
   transform:translate(-50%,-100%);
   pointer-events:auto;cursor:grab;touch-action:none;
-  user-select:none;-webkit-user-select:none}
+  user-select:none;-webkit-user-select:none;
+  /* The idle drift moves this element with a transform over a few seconds, so it
+     reads as swimming rather than teleporting. The stored position is untouched. */
+  transition:transform 2600ms ease-in-out}
 .dpi-pet.dpi-dragging{cursor:grabbing}
 
 /* The picture. Draggable is off in the markup as well: a browser's native image
@@ -353,6 +358,24 @@ window.__ModuleLoader__.load({
 .dpi-swatch-dot-ink{background:#1e293b}
 .dpi-swatch-dot-ember{background:#ef4444}
 
+/* The two ways to address her. Text buttons, not icons: the copy IS the feature, so
+   it has to be readable, and each carries a bilingual aria-label in the markup. */
+.dpi-actions{display:flex;gap:6px;margin-top:9px}
+.dpi-action{flex:1 1 0;font-family:inherit;font-size:11px;line-height:1.35;
+  padding:4px 6px;border-radius:8px;cursor:pointer;white-space:nowrap;
+  border:1px solid rgba(148,163,184,.45);
+  background:rgba(148,163,184,.12);color:inherit}
+.dpi-action:hover{background:rgba(148,163,184,.22)}
+
+/* Lying down. Squash and tilt, and STOP the three loops while she is down: a
+   sleeping pet that keeps bobbing is not lying down. No new asset is involved, so
+   all eight skins keep working. */
+.dpi-lazy .dpi-sway{animation:none;transform:rotate(-8deg) translateY(7px) scale(1.07,.8)}
+.dpi-lazy .dpi-bob{animation:none;transform:none}
+.dpi-lazy .dpi-img{animation:none;transform:none;
+  filter:drop-shadow(0 3px 5px rgba(4,10,24,.38))}
+.dpi-lazy .dpi-pet{cursor:default}
+
 /* The toggle lives in the sidebar footer, not in this layer. */
 .dpi-toggle{display:inline-flex;align-items:center;gap:7px;
   font-family:inherit;font-size:12px;line-height:1.2;
@@ -397,6 +420,9 @@ window.__ModuleLoader__.load({
 @media (prefers-reduced-motion:reduce){
   .dpi-sway,.dpi-bob,.dpi-img,.dpi-bubble{animation:none}
   .dpi-happy .dpi-bob,.dpi-happy .dpi-sway{animation:none}
+  /* The lazy pose is a still frame, so its transform stays; what stops is every
+     ANIMATION, including the three loops and the drift transition. */
+  .dpi-lazy .dpi-sway,.dpi-lazy .dpi-bob,.dpi-lazy .dpi-img{animation:none}
   .dpi-pet{transition:none}
 }
 `
@@ -590,6 +616,297 @@ window.__ModuleLoader__.load({
       return LINES[at % LINES.length]
     }
 
+    // ── the persona: the copy table, plus a pure mood machine ────────────────
+    //
+    // The character is a Q-version whale girl: she eats rice, she is clever and
+    // lazy, she is a tsundere who deflects and then softens, she refuses to be
+    // called fat, and she answers to 鲸鲸.
+    //
+    // NONE of that lives in the JSX. It lives here: one table of bilingual copy
+    // (the lines are the deliverable, so they are carried verbatim) and one pure
+    // transition function. The renderer only asks "what mood, which pool" and
+    // renders. That is what lets scripts/verify-pet.mjs walk the whole matrix with
+    // numbers and never open a browser.
+    //
+    // Her display name is still 大肥鱼 / "Big Fat Fish" - that is the pet in the UI
+    // and in the repository. Her REACTION to it being used as a fat joke is the
+    // point, not the name itself.
+    // 大肥鱼 · 台词表（数据，不是 JSX）
+    // 每条是 { zh, en }；选取由纯函数完成，测试穷举，不靠渲染反推。
+    const PERSONA_LINES = {
+      greet: [
+        { zh: '……来了啊。米饭呢？', en: '...You are here. Where is the rice?' },
+        { zh: '先说明，我不是来干活的。', en: 'For the record, I am not here to work.' },
+        { zh: '尾巴甩一下，算打过招呼了。', en: 'One tail flick. Consider yourself greeted.' },
+      ],
+
+      click: [
+        { zh: '戳什么戳。', en: 'Stop poking.' },
+        { zh: '……还有事？', en: '...Something you need?' },
+        { zh: '米饭，去拿。', en: 'Rice. Go get it.' },
+        { zh: '嗯，准你再看一会儿。', en: 'Fine. You may look a little longer.' },
+      ],
+
+      // 被叫「大肥鱼」：明确的否认 + 尾鳍警告
+      'call-fat': [
+        { zh: '谁肥了？这叫浮力。', en: 'Who is fat? This is buoyancy.' },
+        { zh: '鲸鱼不叫胖，叫圆润。再说一次试试。', en: 'A whale is not fat, a whale is rounded. Say it again. Try me.' },
+        { zh: '尾鳍警告。', en: 'Tail-fin warning.' },
+        { zh: '哼。米饭扣你一半。', en: 'Hmph. Half your rice is forfeit.' },
+      ],
+
+      // 被叫「鲸鲸」：嘴上敷衍，尾巴很诚实
+      'call-nick': [
+        { zh: '……嗯。这个可以叫。', en: '...Mm. That one is allowed.' },
+        { zh: '再叫一次。', en: 'Say it again.' },
+        { zh: '米饭上要加一个蛋。', en: 'This earns an egg on the rice.' },
+        { zh: '（尾鳍轻轻拍了两下）', en: '(Two soft tail-flicks.)' },
+      ],
+
+      'lazy-start': [
+        { zh: '今天不干了。躺平。', en: 'Done for today. Going flat.' },
+        { zh: '别戳，进入省电模式。', en: 'Do not poke. Low-power mode.' },
+        { zh: '我已经是一条咸鱼……咸鲸。', en: 'I am now a salted fish... salted whale.' },
+      ],
+
+      // 躺平期间被点：只准嘀咕，不准弹气泡
+      'lazy-click': [
+        { zh: '……（装睡）', en: '...(pretending to sleep)' },
+        { zh: 'zzZ', en: 'zzZ' },
+      ],
+
+      'lazy-end': [
+        { zh: '……睡够了。有米饭吗？', en: '...Slept enough. Is there rice?' },
+        { zh: '嗯，活过来了。', en: 'Mm. Back among the living.' },
+      ],
+
+      // 十分钟没人理，游去角落（只改视觉，不改存储坐标）
+      'idle-drift': [
+        { zh: '没人理我，去角落待着。', en: 'Nobody is around. Corner it is.' },
+        { zh: '角落大概有大米的味道。', en: 'I am fairly sure a corner smells like rice.' },
+      ],
+
+      'skin-switch': [
+        { zh: '换件衣服而已，别大惊小怪。', en: 'Just changing clothes. Do not make a thing of it.' },
+        { zh: '这个颜色……还行吧。', en: 'This colour... it is fine, I suppose.' },
+      ],
+    }
+
+    const PET_NAME    = { zh: '大肥鱼', en: 'Big Fat Fish' }
+    const PET_NICK    = { zh: '鲸鲸',   en: 'Jingjing' }
+    const CALL_FAT    = { zh: '叫它 大肥鱼', en: 'Call it 大肥鱼' }
+    const CALL_NICK   = { zh: '叫它 鲸鲸',   en: 'Call it 鲸鲸' }
+
+    /** The closed set of moods. A test can exhaust these. */
+    const MOODS = Object.freeze(['idle', 'happy', 'annoyed', 'lazy'])
+
+    /** The closed set of events the machine accepts. Anything else is ignored. */
+    const MOOD_EVENTS = Object.freeze(['call-fat', 'call-nick', 'click', 'idle-for-a-while', 'lazy-ends'])
+
+    /**
+     * The timing knobs, all in one injectable object.
+     *
+     * Separated from the machine on purpose: the verifier passes its own values, so
+     * the matrix never depends on wall-clock constants. These defaults are what the
+     * plugin ships.
+     */
+    const PERSONA_CONFIG = Object.freeze({
+      /** How many clicks inside the window before she lies down. */
+      lazyAfterClicks: 4,
+      /** The window a click still counts inside. Inclusive at the boundary. */
+      clickWindowMs: 2600,
+      /** How long she refuses to react. */
+      lazyMs: 6000,
+      /** How long happy and annoyed last before the tick returns to idle. */
+      happyMs: 1800,
+      annoyedMs: 2200,
+      /** Quiet time before she drifts to a corner. Visual only. */
+      idleDriftMs: 600000,
+    })
+
+    /** Fold any config argument into a complete, usable one. Never throws. */
+    function personaConfig(overrides) {
+      const source = overrides === null || typeof overrides !== "object" ? {} : overrides
+      const number = (key, minimum) => {
+        const value = source[key]
+        if (typeof value !== "number" || !Number.isFinite(value)) return PERSONA_CONFIG[key]
+        return Math.max(minimum, value)
+      }
+      return {
+        lazyAfterClicks: Math.max(1, Math.round(number("lazyAfterClicks", 1))),
+        clickWindowMs: number("clickWindowMs", 0),
+        lazyMs: number("lazyMs", 0),
+        happyMs: number("happyMs", 0),
+        annoyedMs: number("annoyedMs", 0),
+        idleDriftMs: number("idleDriftMs", 0),
+      }
+    }
+
+    /** The mood a state should be showing at `now`, honouring lazy expiry. */
+    function currentMood(state, now, config) {
+      const source = state === null || typeof state !== "object" ? {} : state
+      const cfg = personaConfig(config)
+      const at = clockOf(now)
+      if (cfg.lazyMs === 0) return "idle"
+      const until = finite(source.lazyUntil, null)
+      if (until !== null && at < until) return "lazy"
+      const mood = MOODS.includes(source.mood) ? source.mood : "idle"
+      return mood === "lazy" ? "idle" : mood
+    }
+
+    /**
+     * The transition function: the whole personality, as arithmetic.
+     *
+     * Inputs are the current state, the event, the clock and the config; the output is
+     * the next state plus the POOL KEY of the line she should say (or null for
+     * silence) and a `speak` flag. Same inputs always give the same answer, which is
+     * what makes the matrix testable.
+     *
+     * Rules, in the order they apply:
+     *
+     *   1. LAZY ABSORBS EVERYTHING. While she is lying down, every event except the
+     *      clock running out is absorbed - including the call buttons and clicks. A
+     *      click during lazy reports the "lazy-click" mumble with speak:false, so the
+     *      renderer must NOT open a bubble for it.
+     *   2. The clock is an input too: once lazyMs has passed the next call ends the
+     *      nap. The boundary is half-open - at exactly lazyUntil she is still down,
+     *      one millisecond later she is not.
+     *   3. call-fat -> annoyed (she is NOT fat), call-nick -> happy (鲸鲸 is the right
+     *      name). These are the two addressable reactions.
+     *   4. N clicks inside the window -> lazy, with lazy-start. The count includes the
+     *      click that trips it, and the window is inclusive at its boundary.
+     *   5. Anything unrecognised changes nothing and reports no line: an unknown event
+     *      is ignored, never an error.
+     */
+    function nextMood(state, event, now, config) {
+      const source = state === null || typeof state !== "object" ? {} : state
+      const cfg = personaConfig(config)
+      const at = clockOf(now)
+      const name = typeof event === "string" ? event : ""
+
+      const mood = MOODS.includes(source.mood) ? source.mood : "idle"
+      const since = finite(source.since, at)
+      const until = finite(source.lazyUntil, null)
+      const clicks = Array.isArray(source.clicks)
+        ? source.clicks.filter((t) => Number.isFinite(t) && t <= at)
+        : []
+      const recent = clicks.filter((t) => at - t <= cfg.clickWindowMs)
+
+      /** Build the result. `line` is a PERSONA_LINES key, or null for silence. */
+      const result = (next, nextSince, nextClicks, nextUntil, line, speak) => ({
+        mood: next,
+        since: nextSince,
+        clicks: nextClicks,
+        lazyUntil: nextUntil,
+        line,
+        speak: speak === true,
+        event: name,
+        at,
+      })
+
+      const lying = until !== null && at < until
+      if (lying) {
+        if (name === "lazy-ends") return result("idle", at, [], null, "lazy-end", true)
+        // Absorbed. The mumble is available as data, but it is not a bubble.
+        const mumble = name === "click" || name === "call-fat" || name === "call-nick" ? "lazy-click" : null
+        return result("lazy", since, recent, until, mumble, false)
+      }
+
+      const justWoke = until !== null && at >= until
+      if (name === "lazy-ends") return result("idle", at, [], null, justWoke ? "lazy-end" : null, justWoke)
+
+      if (name === "call-fat") return result("annoyed", at, recent, null, "call-fat", true)
+      if (name === "call-nick") return result("happy", at, recent, null, "call-nick", true)
+
+      if (name === "click") {
+        const nextClicks = [...recent, at]
+        if (nextClicks.length >= cfg.lazyAfterClicks) {
+          return result("lazy", at, nextClicks, at + cfg.lazyMs, "lazy-start", true)
+        }
+        return result("happy", at, nextClicks, null, "click", true)
+      }
+
+      // The idle tick. The DRIFT line is not spoken here: the drift itself decides
+      // when it starts, once per drift, so a 250 ms tick cannot repeat it.
+      if (name === "idle-for-a-while") return result("idle", at, recent, null, null, false)
+
+      // Unknown event: unchanged, silent. Not an error - decoration must not throw.
+      return result(mood, since, recent, until, null, false)
+    }
+
+    /**
+     * Pick a line out of one pool: deterministic, and it avoids repeating the last
+     * one when the pool has more than one entry. `seed` folds into range like
+     * `pickLine` does, so a clock or a counter works as a seed.
+     */
+    function personaPick(key, seed, lastIndex) {
+      const pool = PERSONA_LINES[key]
+      if (!Array.isArray(pool) || pool.length === 0) return null
+      const size = pool.length
+      const at = Math.abs(Math.trunc(finite(seed, 0)))
+      let index = at % size
+      if (size > 1 && index === lastIndex) index = (index + 1) % size
+      return { index, line: pool[index], key }
+    }
+
+    /** Which pool a skin change speaks from. Named so the UI does not carry a string. */
+    const SKIN_SWITCH_LINE = "skin-switch"
+
+    /** The pool spoken once, when she first appears. */
+    const GREET_LINE = "greet"
+
+    /**
+     * Where she drifts when nobody has touched her for a while.
+     *
+     * VISUAL ONLY. The result carries persist:false and this function never mutates
+     * its input, because a drift that wrote into the stored x/y would silently
+     * overwrite the spot the user chose - the one thing a "remember where I left it"
+     * pet must never do.
+     *
+     * `announced` is how the drift line fires ONCE per drift rather than on every
+     * tick: `started` is true only on the first call after the idle threshold, and
+     * the caller flips `announced` when it speaks.
+     */
+    function idleDrift(state, now, config) {
+      const source = state === null || typeof state !== "object" ? {} : state
+      const cfg = personaConfig(config)
+      const at = clockOf(now)
+      const position = clampPosition(source.position ?? source)
+      const last = finite(source.lastInteraction, at)
+      const quiet = {
+        drifting: false,
+        started: false,
+        persist: false,
+        from: position,
+        target: position,
+        idleFor: Math.max(0, at - last),
+        reason: "recent",
+      }
+      // Reduced motion means no drift at all: the drift is movement.
+      if (wantsReducedMotion(source)) return Object.assign({}, quiet, { reason: "reduced-motion" })
+      if (cfg.idleDriftMs === 0) return quiet
+      // Inclusive at the threshold: exactly idleDriftMs of quiet is enough.
+      if (at - last < cfg.idleDriftMs) return quiet
+      const middle = (MIN_POS + MAX_POS) / 2
+      return {
+        drifting: true,
+        started: source.announced !== true,
+        persist: false,
+        from: position,
+        target: {
+          x: position.x < middle ? MIN_POS : MAX_POS,
+          y: position.y < middle ? MIN_POS : MAX_POS,
+        },
+        idleFor: Math.max(0, at - last),
+        reason: "idle",
+      }
+    }
+
+    /** What a mood looks like, as flags the renderer and the tests can read. */
+    function moodPose(mood) {
+      const name = MOODS.includes(mood) ? mood : "idle"
+      return { mood: name, lying: name === "lazy", silent: name === "lazy" }
+    }
     // ── react ────────────────────────────────────────────────────────────────
     //
     // Resolved from the host's loader, not imported: the bundle ships no react.
@@ -772,13 +1089,21 @@ window.__ModuleLoader__.load({
     function Pet(props) {
       const state = props.state
       const position = props.position
+      const persona = props.persona
       const now = useClock(state.visible)
       const drag = React.useRef(null)
       const [dragging, setDragging] = React.useState(false)
-      const [bubble, setBubble] = React.useState(null)
+
+      const mood = currentMood(persona, now)
+      const layered = moodPose(mood)
 
       const pose = nextPose(
-        { ...state, mode: pickMode(state.since, now), since: state.since, reducedMotion: props.reducedMotion },
+        {
+          ...state,
+          mode: mood === 'happy' ? 'happy' : 'idle',
+          since: persona.since,
+          reducedMotion: props.reducedMotion,
+        },
         'tick',
         now,
       )
@@ -787,12 +1112,37 @@ window.__ModuleLoader__.load({
       // sheet's animations run at all. The MOVE is CSS; the DECISION is here.
       const stance = stanceAt({ position, reducedMotion: props.reducedMotion }, now)
 
-      // A bubble is a plain timeout, cleared on unmount: no interval, no listener.
+      /**
+       * Where she drifts when nobody has touched her. Pure, and visual only: the
+       * result is a transform on this element, never a write to the stored x/y.
+       */
+      const drift = idleDrift(
+        {
+          position,
+          lastInteraction: props.lastTouch,
+          announced: persona.driftAnnounced === true,
+          reducedMotion: props.reducedMotion,
+        },
+        now,
+      )
+
+      // The drift line is spoken ONCE per drift: the transition is reported by the
+      // pure function as `started`, and the store flips its flag when it speaks.
       React.useEffect(() => {
-        if (bubble === null) return undefined
-        const id = setTimeout(() => setBubble(null), BUBBLE_MS)
-        return () => clearTimeout(id)
-      }, [bubble])
+        if (drift.started && drift.drifting) props.onDriftStart()
+      }, [drift.started, drift.drifting])
+
+      /**
+       * The bubble comes from the persona table, not from local state.
+       *
+       * It is shown only when the transition said to SPEAK (so the lazy mumble never
+       * becomes a bubble), only while the mood is not lazy, and only for BUBBLE_MS
+       * after the event.
+       */
+      const sinceSpoke = now - finite(persona.speakAt, -BUBBLE_MS * 2)
+      const speaking =
+        persona.speak === true && persona.line !== null && layered.silent !== true && sinceSpoke >= 0 && sinceSpoke < BUBBLE_MS
+      const picked = speaking ? personaPick(persona.line, persona.speakAt, persona.lastIndex) : null
 
       /** Percentages from a pointer position, via the anchor the pet is drawn from. */
       const percentFrom = (event) => {
@@ -841,22 +1191,30 @@ window.__ModuleLoader__.load({
         // A drag is not a click. Without this the pet would say something every
         // time it was moved, which is the fastest way to make it annoying.
         if (active !== null && active.moved > CLICK_SLOP_PX) return
-        props.onPoke()
-        setBubble({ index: Date.now() % LINES.length })
+        // The STORE decides what a click means: a line, a lazy-start, or nothing at
+        // all because she is lying down. The renderer never decides tone.
+        props.onEvent('click')
       }
 
       const onKeyDown = (event) => {
         if (event.key !== 'Enter' && event.key !== ' ') return
         event.preventDefault()
-        props.onPoke()
-        setBubble({ index: Date.now() % LINES.length })
+        props.onEvent('click')
       }
 
       const petStyle = {
         left: `${String(position.x)}%`,
         top: `${String(position.y)}%`,
       }
-      const line = bubble === null ? null : pickLine(bubble.index)
+      // The drift is a TRANSFORM, and only a transform. The stored position stays
+      // exactly where the user put her; this only moves the picture, smoothly.
+      if (drift.drifting) {
+        const view = viewport()
+        const dx = Math.round(((drift.target.x - drift.from.x) / 100) * view.width)
+        const dy = Math.round(((drift.target.y - drift.from.y) / 100) * view.height)
+        petStyle.transform = 'translate(-50%,-100%) translate(' + String(dx) + 'px,' + String(dy) + 'px)'
+      }
+      const line = picked === null ? null : picked.line
 
       return React.createElement(
         'div',
@@ -864,7 +1222,9 @@ window.__ModuleLoader__.load({
         React.createElement(
           'div',
           {
-            className: `${CLASS.pet}${pose.mode === 'happy' ? ' dpi-happy' : ''}${pose.blinking ? ' dpi-blinking' : ''}`,
+            className:
+              `${CLASS.pet}${pose.mode === 'happy' ? ' dpi-happy' : ''}${pose.blinking ? ' dpi-blinking' : ''}` +
+              (layered.lying ? ' ' + CLASS.lazy : ''),
             style: petStyle,
             role: 'button',
             tabIndex: 0,
@@ -974,6 +1334,36 @@ window.__ModuleLoader__.load({
                   ),
                 ),
               ),
+              // The two ways a user can ADDRESS her. This is the only route to the
+              // tsundere refusal, so it is a first-class button, not an easter egg.
+              React.createElement(
+                'div',
+                { className: CLASS.actions },
+                React.createElement(
+                  'button',
+                  {
+                    type: 'button',
+                    className: CLASS.action,
+                    'data-call': 'fat',
+                    'aria-label': CALL_FAT.zh + ' / ' + CALL_FAT.en,
+                    title: CALL_FAT.zh + ' / ' + CALL_FAT.en,
+                    onClick: props.onCallFat,
+                  },
+                  CALL_FAT.zh,
+                ),
+                React.createElement(
+                  'button',
+                  {
+                    type: 'button',
+                    className: CLASS.action,
+                    'data-call': 'nick',
+                    'aria-label': CALL_NICK.zh + ' / ' + CALL_NICK.en,
+                    title: CALL_NICK.zh + ' / ' + CALL_NICK.en,
+                    onClick: props.onCallNick,
+                  },
+                  CALL_NICK.zh,
+                ),
+              ),
             )
           : null,
       )
@@ -1028,6 +1418,8 @@ window.__ModuleLoader__.load({
           /** One place where a position change becomes state + a debounced save. */
           const moveTo = (next) => {
             const clamped = clampPosition(next)
+            // Any drag cancels the drift, even one that ends where it started.
+            mounted.touch()
             if (clamped.x === store.current.x && clamped.y === store.current.y) return
             store.current = { ...store.current, ...clamped }
             mounted.setPosition({ ...clamped })
@@ -1110,6 +1502,28 @@ window.__ModuleLoader__.load({
       let skin = resolveSkin(store.current.skin)
       const subscribers = new Set()
 
+      /**
+       * The persona state. It starts by greeting: she is new here, and a pet that
+       * appears in silence is a bug rather than a character.
+       *
+       * `lastIndex` remembers the last line used in the current pool so the picker
+       * does not repeat it. `driftAnnounced` makes the drift line fire once per
+       * drift, not once per tick.
+       */
+      let persona = {
+        mood: 'idle',
+        since: Date.now(),
+        clicks: [],
+        lazyUntil: null,
+        line: GREET_LINE,
+        speak: true,
+        speakAt: Date.now(),
+        lastIndex: -1,
+        driftAnnounced: false,
+      }
+      /** When anything last happened. Drives the idle drift. */
+      let lastTouch = Date.now()
+
       const emit = () => {
         for (const notify of subscribers) {
           try {
@@ -1127,10 +1541,68 @@ window.__ModuleLoader__.load({
         return () => subscribers.delete(notify)
       }
 
-      const snapshot = () => ({ position, visible, skin })
+      const snapshot = () => ({ position, visible, skin, persona, lastTouch })
       const getVisible = () => visible
       const getPosition = () => position
       const getSkin = () => skin
+      const getPersona = () => persona
+
+      /** Anything the user did cancels the drift and resets its announcement. */
+      const touch = () => {
+        lastTouch = Date.now()
+        if (persona.driftAnnounced) persona = { ...persona, driftAnnounced: false }
+      }
+
+      /**
+       * Run one event through the pure transition function and adopt the result.
+       *
+       * The reducer lives in `nextMood`; this only does the bookkeeping the DOM
+       * needs (which line index was used, when it was said). No tone is decided here.
+       */
+      const dispatch = (event) => {
+        const at = Date.now()
+        const next = nextMood(persona, event, at, PERSONA_CONFIG)
+        const picked = next.speak && next.line !== null ? personaPick(next.line, at, persona.lastIndex) : null
+        persona = {
+          mood: next.mood,
+          since: next.since,
+          clicks: next.clicks,
+          lazyUntil: next.lazyUntil,
+          line: next.line,
+          speak: next.speak,
+          speakAt: picked === null ? persona.speakAt : at,
+          lastIndex: picked === null ? persona.lastIndex : picked.index,
+          driftAnnounced: persona.driftAnnounced,
+        }
+        touch()
+        emit()
+      }
+
+      /**
+       * Say something from a named pool without changing the mood - used by the
+       * drift (once, when it starts) and by a skin switch.
+       */
+      const speak = (key) => {
+        const at = Date.now()
+        const picked = personaPick(key, at, persona.lastIndex)
+        if (picked === null) return
+        persona = {
+          ...persona,
+          line: key,
+          speak: true,
+          speakAt: at,
+          lastIndex: picked.index,
+        }
+        emit()
+      }
+
+      /** The drift line: once per drift, and it marks the drift as announced. */
+      const driftStart = () => {
+        if (persona.driftAnnounced) return
+        persona = { ...persona, driftAnnounced: true }
+        speak('idle-drift')
+        emit()
+      }
 
       const setPosition = (next) => {
         position = clampPosition(next)
@@ -1163,15 +1635,14 @@ window.__ModuleLoader__.load({
             // The store's skin, not the raw stored value: a hand-edited state.json
             // must render the default look, never a broken <img>.
             skin: snapshotValue.skin,
-            mode: pickMode(store.current.since, Date.now()),
           },
           position: snapshotValue.position,
+          persona: snapshotValue.persona,
+          lastTouch: snapshotValue.lastTouch,
           reducedMotion: prefersReducedMotion(),
           onMove: moveTo,
-          onPoke: () => {
-            store.current = { ...store.current, since: Date.now() }
-            emit()
-          },
+          onEvent: dispatch,
+          onDriftStart: driftStart,
         })
       }
 
@@ -1210,7 +1681,10 @@ window.__ModuleLoader__.load({
         return React.createElement(PetPanel, {
           state: { visible: snapshotValue.visible, skin: snapshotValue.skin },
           open,
-          onToggleOpen: () => setOpen(!open),
+          onToggleOpen: () => {
+            touch()
+            setOpen(!open)
+          },
           onPickSkin: (id) => {
             const next = resolveSkin(id)
             store.current = { ...store.current, skin: next }
@@ -1218,7 +1692,12 @@ window.__ModuleLoader__.load({
             // Persisted immediately (not debounced): a skin is one click, and the
             // user expects it to still be there after a reload.
             client.save({ skin: next })
+            // She has something to say about being redressed — the same bubble.
+            touch()
+            speak(SKIN_SWITCH_LINE)
           },
+          onCallFat: () => dispatch('call-fat'),
+          onCallNick: () => dispatch('call-nick'),
         })
       }
 
@@ -1235,7 +1714,8 @@ window.__ModuleLoader__.load({
       )
 
       void getPosition
-      return { setPosition, setVisible, setSkin }
+      void getPersona
+      return { setPosition, setVisible, setSkin, dispatch, touch }
     }
 
     exports.apply = apply
@@ -1270,6 +1750,24 @@ window.__ModuleLoader__.load({
     exports.SKIN_URL_PREFIX = SKIN_URL_PREFIX
     exports.resolveSkin = resolveSkin
     exports.skinUrl = skinUrl
+    // The persona, as data: the copy table, the constants it refers to, and the
+    // pure functions that decide what she does. `scripts/verify-pet.mjs` walks the
+    // whole matrix through these.
+    exports.PERSONA_LINES = PERSONA_LINES
+    exports.MOODS = MOODS
+    exports.MOOD_EVENTS = MOOD_EVENTS
+    exports.PERSONA_CONFIG = PERSONA_CONFIG
+    exports.personaConfig = personaConfig
+    exports.currentMood = currentMood
+    exports.nextMood = nextMood
+    exports.personaPick = personaPick
+    exports.idleDrift = idleDrift
+    exports.moodPose = moodPose
+    exports.PET_NICK = PET_NICK
+    exports.CALL_FAT = CALL_FAT
+    exports.CALL_NICK = CALL_NICK
+    exports.GREET_LINE = GREET_LINE
+    exports.SKIN_SWITCH_LINE = SKIN_SWITCH_LINE
 
     return module.exports
   },

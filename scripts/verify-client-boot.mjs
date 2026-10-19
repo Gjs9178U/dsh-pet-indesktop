@@ -93,13 +93,20 @@ const elements = []
  * evaluate function components (depth-limited, because a component that renders
  * itself would otherwise hang the verifier).
  */
-function walk(type, props, depth) {
+function walk(type, props, depth, children = []) {
   const name = typeof type === 'string' ? type : (type?.name ?? '(component)')
   // `fn` is kept so a component can be re-invoked in a state the mount does not
   // produce — the popover is closed on mount, and pressing a button is not something
   // this stub can do. Re-invoking the recorded component with different props is the
   // same code path the seat would run after the click.
-  elements.push({ type: name, fn: typeof type === 'function' ? type : null, props: props ?? {} })
+  elements.push({
+    type: name,
+    fn: typeof type === 'function' ? type : null,
+    props: props ?? {},
+    // createElement takes children positionally, not in props: a recorder that drops
+    // them cannot see a button's visible text.
+    children: Array.isArray(children) ? children : [children],
+  })
   if (typeof type !== 'function' || depth >= 8) return null
   try {
     type(props ?? {})
@@ -112,11 +119,7 @@ function walk(type, props, depth) {
 
 /** The react stub: enough of the API for the module to load and mount. */
 const reactStub = {
-  createElement: (type, props, ...children) => {
-    const recorded = walk(type, props, 0)
-    void children
-    return recorded
-  },
+  createElement: (type, props, ...children) => walk(type, props, 0, children),
   useCallback: (fn) => fn,
   useEffect: () => {},
   useRef: () => ({ current: null }),
@@ -628,6 +631,140 @@ out.log('\nbehaviour:')
     /className: CLASS\.img,\s*\n\s*src: skinUrl\(resolveSkin\(props\.skin\)\)/.test(readFileSync(BUNDLE, 'utf8')),
     'the <img> src is skinUrl(resolveSkin(skin)) — never a raw value',
   )
+}
+
+
+// ── the personality, in the markup ───────────────────────────────────────────
+//
+// The two call buttons are the ONLY route to the tsundere refusal, so they are
+// asserted as markup, not assumed. The lazy rules are asserted by driving the
+// components with a persona state, because that is what a real click would produce.
+{
+  const scenario = run({ provideServices: true })
+  const panelElement = scenario.rendered.find((element) => element.type === 'PetPanel')
+  check(panelElement !== undefined, 'the sidebar seat renders a PetPanel (for the personality markup)')
+
+  if (panelElement !== undefined && panelElement.fn !== null) {
+    const before = elements.length
+    panelElement.fn({ ...panelElement.props, open: true })
+    const opened = elements.splice(before, elements.length - before)
+
+    const calls = opened.filter((element) => element.type === 'button' && element.props['data-call'] !== undefined)
+    check(calls.length === 2, `the popover renders exactly two call buttons (got ${String(calls.length)})`)
+    const fatButton = calls.find((element) => element.props['data-call'] === 'fat')
+    const nickButton = calls.find((element) => element.props['data-call'] === 'nick')
+    check(fatButton !== undefined && nickButton !== undefined, 'the two buttons are the fat one and the nickname one')
+
+    for (const [button, label] of [
+      [fatButton, 'fat'],
+      [nickButton, 'nick'],
+    ]) {
+      const aria = String(button?.props?.['aria-label'] ?? '')
+      check(aria !== '', `the ${label} button has an aria-label`)
+      check(aria.includes('大肥鱼') || aria.includes('鲸鲸'), `the ${label} button names her in the label (got ${aria})`)
+      check(
+        /[\u4e00-\u9fff]/.test(aria) && /[A-Za-z]/.test(aria),
+        `the ${label} button's label is bilingual (got ${aria})`,
+      )
+      check(button?.props?.type === 'button', `the ${label} button is a real button element`)
+      check(typeof button?.props?.onClick === 'function', `the ${label} button is wired to a handler`)
+      const text = String((button?.children ?? []).filter((child) => typeof child === 'string').join(' '))
+      check(text.trim() !== '', `the ${label} button carries visible text (got ${text})`)
+    }
+    const textOf = (element) => String((element?.children ?? []).filter((child) => typeof child === 'string').join(' '))
+    check(
+      textOf(fatButton).includes('大肥鱼'),
+      'the fat button says 大肥鱼 — she is addressed by the name she refuses',
+    )
+    check(textOf(nickButton).includes('鲸鲸'), 'the nickname button says 鲸鲸')
+
+    // The panel still has to work at eight swatches plus two buttons.
+    const swatches = opened.filter(
+      (element) => element.type === 'button' && element.props['data-skin'] !== undefined,
+    )
+    check(swatches.length === 8, `the eight swatches are still there alongside the buttons (got ${String(swatches.length)})`)
+    const actions = opened.find((element) => element.type === 'div' && element.props?.className === 'dpi-actions')
+    check(actions !== undefined, 'the buttons live in their own row (dpi-actions)')
+  }
+}
+
+// The pet under a LAZY persona: no bubble, and the lying-down class.
+{
+  const scenario = run({ provideServices: true })
+  const petElement = scenario.rendered.find((element) => element.type === 'Pet')
+  check(petElement !== undefined, 'the overlay seat renders a Pet')
+
+  if (petElement !== undefined && petElement.fn !== null) {
+    /** Render the pet with a chosen persona, and hand back what it built. */
+    const renderPet = (persona) => {
+      const from = elements.length
+      petElement.fn({ ...petElement.props, persona })
+      return elements.splice(from, elements.length - from)
+    }
+
+    // A lazy state: she was clicked into exhaustion a moment ago, and the mumble is
+    // available as data but must NOT become a bubble.
+    const lazyNow = Date.now()
+    const lazyPersona = {
+      mood: 'lazy',
+      since: lazyNow,
+      clicks: [lazyNow],
+      lazyUntil: lazyNow + 60_000,
+      line: 'lazy-click',
+      speak: false,
+      speakAt: lazyNow,
+      lastIndex: 0,
+      driftAnnounced: false,
+    }
+    const lazyRender = renderPet(lazyPersona)
+    const isBubble = (element) =>
+      element.type === 'div' && String(element.props?.className ?? '') === 'dpi-bubble'
+    const lazyBubbles = lazyRender.filter(isBubble)
+    check(lazyBubbles.length === 0, `a click while lazy creates NO bubble (got ${String(lazyBubbles.length)})`)
+    check(
+      lazyRender.some((element) => String(element.props?.className ?? '').includes('dpi-lazy')),
+      'the lazy persona puts the lying-down class on the pet',
+    )
+    // ...while a speaking persona with the same shape DOES open one, so the check
+    // above cannot pass merely because nothing ever renders a bubble.
+    const speakingPersona = { ...lazyPersona, mood: 'annoyed', line: 'call-fat', speak: true, lazyUntil: null }
+    const speakingRender = renderPet(speakingPersona)
+    const speakingBubbles = speakingRender.filter(isBubble)
+    check(speakingBubbles.length === 1, `a speaking persona opens exactly one bubble (got ${String(speakingBubbles.length)})`)
+    check(
+      !speakingRender.some((element) => String(element.props?.className ?? '').includes('dpi-lazy')),
+      'an annoyed persona is not lying down',
+    )
+    // The bubble carries both languages.
+    const bubble = speakingBubbles[0]
+    const bubbleText = JSON.stringify(bubble?.props ?? {})
+    void bubbleText
+    check(
+      speakingRender.some((element) => String(element.props?.className ?? '').includes('dpi-bubble-zh')),
+      'the bubble has a Chinese line',
+    )
+    check(
+      speakingRender.some((element) => String(element.props?.className ?? '').includes('dpi-bubble-en')),
+      'the bubble has an English line',
+    )
+  }
+}
+
+// Reduced motion still kills all three loops — including the lazy pose.
+{
+  const sheet = /const CSS = `([\s\S]*?)`\n/.exec(readFileSync(BUNDLE, 'utf8'))?.[1] ?? ''
+  const reduced = /@media \(prefers-reduced-motion:reduce\)\{([\s\S]*?)\n\}/.exec(sheet)?.[1] ?? ''
+  check(reduced !== '', 'the sheet has a prefers-reduced-motion block')
+  for (const selector of ['.dpi-sway', '.dpi-bob', '.dpi-img']) {
+    check(
+      reduced.includes(selector) && /animation:none/.test(reduced),
+      `reduced motion stops ${selector} (animation:none)`,
+    )
+  }
+  check(reduced.includes('.dpi-lazy'), 'reduced motion also covers the lazy pose explicitly')
+  check(/\.dpi-lazy[^{]*\{[^}]*animation:none/.test(sheet), 'the lazy pose stops the loops while she is down')
+  check(/\.dpi-lazy .dpi-sway\{[^}]*transform:rotate/.test(sheet), 'the lazy pose tilts her (a transform, not a new asset)')
+  check(/\.dpi-pet\{[^}]*transition:transform/.test(sheet), 'the drift moves her with a transform transition')
 }
 
 // h. Pre-dynamic-injection host that does offer the service: mount directly.

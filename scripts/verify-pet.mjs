@@ -561,6 +561,429 @@ out.log('\nthe skin allow-list — a valid id is kept, anything else becomes the
   )
 }
 
+out.log('\nthe persona — the copy table, checked entry by entry:')
+{
+  /**
+   * The copy is the deliverable, so it is checked as DATA: every bucket present,
+   * every entry bilingual, and no entry allowed to put a fat joke in her own mouth.
+   */
+  const BUCKETS = ['greet', 'click', 'call-fat', 'call-nick', 'lazy-start', 'lazy-click', 'lazy-end', 'idle-drift', 'skin-switch']
+  const table = pet.PERSONA_LINES
+  check(table !== null && typeof table === 'object', 'PERSONA_LINES is exported')
+  check(
+    JSON.stringify(Object.keys(table ?? {}).sort()) === JSON.stringify([...BUCKETS].sort()),
+    `the table has exactly the nine copy buckets (got ${Object.keys(table ?? {}).join(', ')})`,
+  )
+
+  let entries = 0
+  for (const key of BUCKETS) {
+    const pool = table?.[key]
+    check(Array.isArray(pool) && pool.length > 0, `the "${key}" bucket is a non-empty list`)
+    if (!Array.isArray(pool)) continue
+    entries += pool.length
+    for (const [index, line] of pool.entries()) {
+      check(
+        typeof line.zh === 'string' && line.zh.trim() !== '',
+        `"${key}"[${String(index)}] has non-empty zh`,
+      )
+      check(
+        typeof line.en === 'string' && line.en.trim() !== '',
+        `"${key}"[${String(index)}] has non-empty en`,
+      )
+      // A line is a bubble, not an essay: the sheet has room for two short rows.
+      check(line.zh.length <= 40, `"${key}"[${String(index)}] zh is bubble-sized (${String(line.zh.length)} chars)`)
+      check(line.en.length <= 90, `"${key}"[${String(index)}] en is bubble-sized (${String(line.en.length)} chars)`)
+      // No fourth-wall self-reference: she is a whale, not software.
+      //
+      // WORD BOUNDARIES matter here: the first version of this check matched
+      // "t-AI-l" inside "tail" and "f-AI-r" inside "fairly", and failed five lines
+      // that are perfectly good copy. A guard that fires on ordinary English is
+      // worse than no guard, because it trains the next person to delete it.
+      check(
+        !/\b(AI|A\.I\.|program|programme|plugin|model|assistant|robot|chatbot|bot)\b/i.test(line.en),
+        `"${key}"[${String(index)}] does not describe herself as software`,
+      )
+      check(
+        !/(插件|程序|模型|人工智能|机器人)/.test(line.zh),
+        `"${key}"[${String(index)}] zh does not describe herself as software`,
+      )
+    }
+  }
+  // 26 lines: greet 3, click 4, call-fat 4, call-nick 4, lazy-start 3, lazy-click 2,
+  // lazy-end 2, idle-drift 2, skin-switch 2.
+  check(entries === 26, `the table carries all 26 copy lines (got ${String(entries)})`)
+  for (const [key, expected] of Object.entries({ greet: 3, click: 4, 'call-fat': 4, 'call-nick': 4, 'lazy-start': 3, 'lazy-click': 2, 'lazy-end': 2, 'idle-drift': 2, 'skin-switch': 2 })) {
+    check(table?.[key]?.length === expected, `"${key}" carries ${String(expected)} line(s) (got ${String(table?.[key]?.length)})`)
+  }
+
+  /**
+   * THE "肥" GUARD. A cheap, deliberately blunt check so a future edit cannot put a
+   * fat joke in her own mouth: she may QUOTE the word back at the user ("谁肥了"),
+   * but no line anywhere may assert fatness in the first person, or use it as a name.
+   */
+  const SELF_FAT = [
+    // First person plus 肥 in the SAME clause. Clause-scoped on purpose: she may say
+    // "谁肥了" or quote the name back, but she may never describe herself that way.
+    /我[^，。；]{0,6}肥/,
+    // 肥 used as a noun for her.
+    /肥(鲸|鱼|妹|婆|猪)/,
+    // "叫我大肥" / "是我肥" style self-labelling.
+    /(叫|是)我(大)?肥/,
+  ]
+
+  /**
+   * The guard must not be vacuous. These strings are what it EXISTS to catch, so they
+   * are asserted to match: narrowing the patterns above then fails here instead of
+   * quietly letting a fat joke through.
+   */
+  for (const sample of ['我是有点肥，但很可爱。', '我很肥。', '我肥了啦', '肥鲸一只', '叫我大肥鱼就行']) {
+    check(
+      SELF_FAT.some((pattern) => pattern.test(sample)),
+      `the self-fat guard catches ${JSON.stringify(sample)}`,
+    )
+  }
+  // ...and it must not fire on the copy's own, legitimate first-person lines.
+  for (const allowed of ['我不是来干活的。', '我在思考。很复杂的那种。', '我叫鲸鲸。', '我不是胖，是圆润。', '我算过了，这一碗的热量刚好。']) {
+    check(
+      !SELF_FAT.some((pattern) => pattern.test(allowed)),
+      `the self-fat guard leaves ${JSON.stringify(allowed)} alone`,
+    )
+  }
+  let fatHits = 0
+  for (const key of BUCKETS) {
+    for (const line of table?.[key] ?? []) {
+      for (const pattern of SELF_FAT) {
+        if (pattern.test(line.zh)) {
+          fatHits += 1
+          check(false, `"${key}" line calls her fat in her own voice: ${line.zh}`)
+        }
+      }
+    }
+  }
+  check(fatHits === 0, `no entry anywhere asserts fatness in the first person (${String(fatHits)} hit(s))`)
+  check(
+    !(table?.['call-fat'] ?? []).some((line) => line.zh.includes('大肥鱼')),
+    'the refusal bucket never repeats the name as if she accepted it',
+  )
+  // ...and the bucket must still ENGAGE with being called fat, or the guard above
+  // would pass on a table that quietly dropped the joke.
+  const fatPool = table?.['call-fat'] ?? []
+  check(
+    fatPool.some((line) => /(肥|胖)/.test(line.zh)),
+    'the call-fat bucket actually addresses being called fat',
+  )
+  check(
+    fatPool.some((line) => /(不|谁|警告|扣|才)/.test(line.zh)),
+    'and it pushes back rather than agreeing',
+  )
+
+  // The constants are the copy's, verbatim.
+  check(pet.PET_NAME?.zh === '大肥鱼' && pet.PET_NAME?.en === 'Big Fat Fish', 'PET_NAME is 大肥鱼 / Big Fat Fish')
+  check(pet.PET_NICK?.zh === '鲸鲸' && pet.PET_NICK?.en === 'Jingjing', 'PET_NICK is 鲸鲸 / Jingjing')
+  check(pet.CALL_FAT?.zh === '叫它 大肥鱼', 'CALL_FAT carries the button label')
+  check(pet.CALL_NICK?.zh === '叫它 鲸鲸', 'CALL_NICK carries the button label')
+}
+
+out.log('\nthe mood machine — every transition, as arithmetic:')
+{
+  /**
+   * The config is INJECTED, so nothing here depends on the shipped timings. The
+   * values are small and round on purpose: a boundary of 100 is easy to be one
+   * millisecond either side of.
+   */
+  const cfg = { lazyAfterClicks: 3, clickWindowMs: 1000, lazyMs: 500, happyMs: 200, annoyedMs: 200, idleDriftMs: 5000 }
+  const start = { mood: 'idle', since: 0, clicks: [], lazyUntil: null }
+
+  const step = (state, event, now) => pet.nextMood(state, event, now, cfg)
+  check(typeof pet.nextMood === 'function', 'nextMood is exported')
+
+  // ── the two addressable reactions ────────────────────────────────────────
+  const fat = step(start, 'call-fat', 100)
+  check(fat.mood === 'annoyed', `call-fat -> annoyed (got ${String(fat.mood)})`)
+  check(fat.line === 'call-fat', `call-fat -> the call-fat pool (got ${String(fat.line)})`)
+  check(fat.speak === true, 'call-fat opens a bubble')
+  const fatLines = pet.PERSONA_LINES['call-fat']
+  check(
+    fatLines.some((line) => /(不是胖|浮力|圆润|尾鳍|鲸脂|不叫胖|谁肥)/.test(line.zh) || /(not fat|buoyancy|rounded)/i.test(line.en)),
+    'the call-fat pool says she is NOT fat',
+  )
+
+  const nick = step(start, 'call-nick', 100)
+  check(nick.mood === 'happy', `call-nick -> happy (got ${String(nick.mood)})`)
+  check(nick.line === 'call-nick', `call-nick -> the call-nick pool (got ${String(nick.line)})`)
+  check(nick.speak === true, 'call-nick opens a bubble')
+
+  const clicked = step(start, 'click', 100)
+  check(clicked.mood === 'happy', `a click -> happy (got ${String(clicked.mood)})`)
+  check(clicked.line === 'click', 'a click -> the click pool')
+
+  // ── the lazy lock ────────────────────────────────────────────────────────
+  // N rapid clicks -> lazy. The count is inclusive of the click that trips it.
+  let busy = start
+  for (let i = 0; i < cfg.lazyAfterClicks - 1; i += 1) busy = step(busy, 'click', 100 + i * 10)
+  check(busy.mood === 'happy', `${String(cfg.lazyAfterClicks - 1)} rapid clicks are NOT enough (got ${String(busy.mood)})`)
+  const tripped = step(busy, 'click', 100 + (cfg.lazyAfterClicks - 1) * 10)
+  check(tripped.mood === 'lazy', `${String(cfg.lazyAfterClicks)} rapid clicks -> lazy (got ${String(tripped.mood)})`)
+  check(tripped.line === 'lazy-start', `lazy -> the lazy-start pool (got ${String(tripped.line)})`)
+  check(tripped.speak === true, 'going lazy opens one bubble')
+  check(
+    tripped.lazyUntil === 100 + (cfg.lazyAfterClicks - 1) * 10 + cfg.lazyMs,
+    `lazyUntil is the trip time plus lazyMs (got ${String(tripped.lazyUntil)})`,
+  )
+  check(pet.PERSONA_LINES['lazy-start'].some((line) => line.zh.includes('今天不干了')), 'the lazy-start copy says 今天不干了')
+
+  // While lazy, a click is ABSORBED: a mumble, never a bubble.
+  const absorbed = step(tripped, 'click', tripped.lazyUntil - 1)
+  check(absorbed.mood === 'lazy', 'a click while lazy leaves her lazy')
+  check(absorbed.line === 'lazy-click', `the mumble is the lazy-click pool (got ${String(absorbed.line)})`)
+  check(absorbed.speak === false, 'THE MUMBLE IS NOT A BUBBLE: click while lazy has speak:false')
+  // The call buttons are absorbed too: "refuses to react for a while".
+  for (const event of ['call-fat', 'call-nick', 'idle-for-a-while']) {
+    const during = step(tripped, event, tripped.lazyUntil - 1)
+    check(during.mood === 'lazy', `${event} while lazy does not change the mood (got ${String(during.mood)})`)
+    check(during.speak === false, `${event} while lazy stays silent`)
+  }
+
+  // The lock RELEASES by the clock, and the boundary is half-open.
+  check(pet.currentMood(tripped, tripped.lazyUntil - 1, cfg) === 'lazy', 'one ms before lazyUntil she is still lazy')
+  check(pet.currentMood(tripped, tripped.lazyUntil, cfg) === 'idle', 'at exactly lazyUntil she is not lazy')
+  check(pet.currentMood(tripped, tripped.lazyUntil + 1, cfg) === 'idle', 'one ms after, still not lazy')
+  const woke = step(tripped, 'lazy-ends', tripped.lazyUntil)
+  check(woke.mood === 'idle', `lazy-ends at the boundary -> idle (got ${String(woke.mood)})`)
+  check(woke.line === 'lazy-end', `lazy-ends speaks the lazy-end pool (got ${String(woke.line)})`)
+  check(woke.speak === true, 'waking up opens a bubble')
+  check(woke.lazyUntil === null, 'waking clears lazyUntil')
+  // After expiry, a click is processed again rather than absorbed.
+  //
+  // The clock here is past BOTH lazyUntil and clickWindowMs. That matters: with this
+  // test config lazyMs (500) is SHORTER than the click window (1000), so a click one
+  // millisecond after waking would still see the three rapid clicks as "recent" and
+  // legitimately put her straight back down. With the shipped defaults that cannot
+  // happen (lazyMs 6000 > clickWindowMs 2600), and the case is asserted separately
+  // below so the behaviour is pinned rather than assumed.
+  const afterExpiry = step(tripped, 'click', tripped.lazyUntil + cfg.clickWindowMs + 1)
+  check(afterExpiry.mood === 'happy', `a click after expiry is handled (got ${String(afterExpiry.mood)})`)
+  const earlyWaker = step(tripped, 'click', tripped.lazyUntil + 1)
+  check(
+    earlyWaker.mood === 'lazy',
+    'with a lazyMs shorter than the click window, the old rapid clicks re-trip the lock (shipped defaults make this impossible)',
+  )
+  check(
+    pet.PERSONA_CONFIG.lazyMs > pet.PERSONA_CONFIG.clickWindowMs,
+    'the shipped defaults keep lazyMs longer than the click window, so waking does not instantly re-trip',
+  )
+
+  // ── the click-window boundary ────────────────────────────────────────────
+  // A click exactly clickWindowMs old still counts; one ms older does not.
+  const exactly = { mood: 'happy', since: 0, clicks: [1000 - cfg.clickWindowMs], lazyUntil: null }
+  const atEdge = step(exactly, 'click', 1000)
+  check(atEdge.clicks.length === 2, `a click exactly at the window edge still counts (got ${String(atEdge.clicks.length)})`)
+  const pastEdge = { mood: 'happy', since: 0, clicks: [1000 - cfg.clickWindowMs - 1], lazyUntil: null }
+  const justPast = step(pastEdge, 'click', 1000)
+  check(
+    justPast.clicks.length === 1,
+    `a click one ms past the window edge is forgotten (got ${String(justPast.clicks.length)})`,
+  )
+  // ...and that difference decides the trip: two stale clicks plus one does not trip
+  // when N is three, but two fresh ones plus one does.
+  const staleBase = { mood: 'happy', since: 0, clicks: [1000 - cfg.clickWindowMs - 1, 1000 - cfg.clickWindowMs - 2], lazyUntil: null }
+  check(step(staleBase, 'click', 1000).mood === 'happy', 'stale clicks do not accumulate towards lazy')
+  const freshBase = { mood: 'happy', since: 0, clicks: [1000 - 10, 1000 - 20], lazyUntil: null }
+  check(step(freshBase, 'click', 1000).mood === 'lazy', 'fresh clicks do accumulate towards lazy')
+
+  // ── the idle tick is silent ──────────────────────────────────────────────
+  const ticked = step({ mood: 'happy', since: 0, clicks: [], lazyUntil: null }, 'idle-for-a-while', 2000)
+  check(ticked.mood === 'idle', `idle-for-a-while -> idle (got ${String(ticked.mood)})`)
+  check(ticked.line === null, 'the idle tick says nothing: the drift line is fired by the drift itself')
+  check(ticked.speak === false, 'and it does not open a bubble')
+
+  // ── unknown events are ignored ───────────────────────────────────────────
+  for (const bogus of ['', 'explode', 'CLICK', 'call-fat ', 'lazy_start', null, undefined, 42, {}, []]) {
+    let result = null
+    let threw = null
+    try {
+      result = step({ mood: 'annoyed', since: 55, clicks: [900], lazyUntil: null }, bogus, 1000)
+    } catch (error) {
+      threw = String(error?.message ?? error)
+    }
+    check(threw === null, `unknown event ${JSON.stringify(bogus)} does not throw${threw === null ? '' : ` (threw: ${threw})`}`)
+    if (result === null) continue
+    check(result.mood === 'annoyed', `unknown event ${JSON.stringify(bogus)} leaves the mood alone`)
+    check(result.line === null, `unknown event ${JSON.stringify(bogus)} produces no line`)
+    check(result.speak === false, `unknown event ${JSON.stringify(bogus)} stays silent`)
+  }
+
+  // ── all four moods are reachable, and moodPose agrees ────────────────────
+  const reached = new Set([
+    step(start, 'call-fat', 100).mood,
+    step(start, 'call-nick', 100).mood,
+    step(start, 'idle-for-a-while', 100).mood,
+    tripped.mood,
+  ])
+  for (const mood of pet.MOODS) check(reached.has(mood), `the mood "${mood}" is reachable from the machine`)
+  check(JSON.stringify(reached.size) === '4', `all four moods are reachable (got ${[...reached].join(', ')})`)
+  for (const mood of pet.MOODS) {
+    const pose = pet.moodPose(mood)
+    check(pose.mood === mood, `moodPose("${mood}") reports itself`)
+    check(pose.lying === (mood === 'lazy'), `moodPose("${mood}").lying is ${mood === 'lazy' ? 'true' : 'false'}`)
+  }
+  check(pet.moodPose('nonsense').mood === 'idle', 'moodPose falls back to idle for an unknown mood')
+
+  // ── the config really is injectable ──────────────────────────────────────
+  const quick = step({ mood: 'idle', since: 0, clicks: [], lazyUntil: null }, 'click', 10) && pet.nextMood({ mood: 'idle', since: 0, clicks: [0, 1], lazyUntil: null }, 'click', 10, { lazyAfterClicks: 2, lazyMs: 50 })
+  check(quick.mood === 'lazy', 'lazyAfterClicks:2 trips on the second click')
+  check(quick.lazyUntil === 60, `lazyMs:50 is honoured (got ${String(quick.lazyUntil)})`)
+  const folded = pet.personaConfig({ lazyAfterClicks: 0, clickWindowMs: -5, lazyMs: 12 })
+  check(folded.lazyAfterClicks === 1, `personaConfig floors lazyAfterClicks at 1 (got ${String(folded.lazyAfterClicks)})`)
+  check(folded.clickWindowMs === 0, `personaConfig floors the window at 0 (got ${String(folded.clickWindowMs)})`)
+  check(folded.lazyMs === 12, 'personaConfig keeps a usable override')
+  const defaults = pet.personaConfig(null)
+  check(
+    defaults.lazyAfterClicks === pet.PERSONA_CONFIG.lazyAfterClicks && defaults.idleDriftMs === pet.PERSONA_CONFIG.idleDriftMs,
+    'an absent config falls back to the shipped defaults',
+  )
+  check(typeof pet.PERSONA_CONFIG.idleDriftMs === 'number' && pet.PERSONA_CONFIG.idleDriftMs === 600000, 'the idle drift default is ten minutes')
+
+  // ── determinism and junk input ───────────────────────────────────────────
+  const a = step(start, 'click', 123)
+  const b = step(start, 'click', 123)
+  check(JSON.stringify(a) === JSON.stringify(b), 'the same inputs give the same state')
+  for (const junk of [null, undefined, 'idle', 42, [], { mood: 'weird' }, { clicks: 'nope' }]) {
+    let threw = null
+    let result = null
+    try {
+      result = pet.nextMood(junk, 'click', 100, cfg)
+    } catch (error) {
+      threw = String(error?.message ?? error)
+    }
+    check(threw === null, `nextMood(${JSON.stringify(junk) ?? 'undefined'}) does not throw${threw === null ? '' : ` (threw: ${threw})`}`)
+    check(result !== null && pet.MOODS.includes(result.mood), `nextMood(${JSON.stringify(junk) ?? 'undefined'}) yields a known mood`)
+  }
+  for (const now of [NaN, Infinity, -Infinity, -1, undefined, 'soon']) {
+    let threw = null
+    try {
+      pet.nextMood(start, 'click', now, cfg)
+      pet.currentMood(start, now, cfg)
+      pet.idleDrift({ position: { x: 50, y: 50 }, lastInteraction: 0 }, now, cfg)
+    } catch (error) {
+      threw = String(error?.message ?? error)
+    }
+    check(threw === null, `a clock of ${String(now)} does not throw${threw === null ? '' : ` (threw: ${threw})`}`)
+  }
+}
+
+out.log('\nthe line picker — deterministic, and it does not repeat itself:')
+{
+  for (const key of Object.keys(pet.PERSONA_LINES)) {
+    const pool = pet.PERSONA_LINES[key]
+    const seen = new Set()
+    for (let seed = 0; seed < pool.length; seed += 1) {
+      const picked = pet.personaPick(key, seed, -1)
+      check(picked !== null && picked.line !== undefined, `personaPick("${key}", ${String(seed)}) resolves a line`)
+      if (picked === null) continue
+      check(picked.index === seed % pool.length, `personaPick("${key}", ${String(seed)}) indexes in range (got ${String(picked.index)})`)
+      check(pool[picked.index] === picked.line, `personaPick("${key}", ${String(seed)}) returns the indexed entry`)
+      seen.add(picked.index)
+    }
+    check(seen.size === pool.length, `every entry of "${key}" is reachable (${String(seen.size)}/${String(pool.length)})`)
+  }
+  // The last-used rule: with more than one entry, the pick moves off the last one.
+  for (const key of Object.keys(pet.PERSONA_LINES)) {
+    const pool = pet.PERSONA_LINES[key]
+    let repeated = 0
+    for (let seed = 0; seed < 12; seed += 1) {
+      const first = pet.personaPick(key, seed, -1)
+      const second = pet.personaPick(key, seed, first.index)
+      if (pool.length > 1 && second.index === first.index) repeated += 1
+    }
+    check(repeated === 0, `"${key}" never repeats the previous line when it has alternatives (${String(repeated)} repeat(s))`)
+  }
+  check(pet.personaPick('nope', 0, -1) === null, 'an unknown pool yields null rather than throwing')
+  check(pet.personaPick('click', 7, -1).index === pet.personaPick('click', 7, -1).index, 'personaPick is deterministic')
+  for (const seed of [NaN, Infinity, -1, -7, 1e9, 3.7, '2', {}, []]) {
+    let threw = null
+    let picked = null
+    try {
+      picked = pet.personaPick('click', seed, -1)
+    } catch (error) {
+      threw = String(error?.message ?? error)
+    }
+    check(threw === null, `personaPick with seed ${JSON.stringify(seed) ?? 'undefined'} does not throw`)
+    check(picked !== null && Number.isInteger(picked.index), `personaPick with seed ${JSON.stringify(seed) ?? 'undefined'} yields an index`)
+  }
+}
+
+out.log('\nthe idle drift — visual only, and the stored position is never touched:')
+{
+  const cfg = { idleDriftMs: 1000 }
+  const base = { position: { x: 20, y: 70 }, lastInteraction: 0 }
+
+  const recent = pet.idleDrift({ ...base, lastInteraction: 500 }, 1000, cfg)
+  check(recent.drifting === false, 'a recent interaction does not drift (exactly one window later)')
+  const early = pet.idleDrift({ ...base, lastInteraction: 1 }, 1000, cfg)
+  check(early.drifting === false, 'one ms short of the threshold does not drift')
+  const atThreshold = pet.idleDrift({ ...base, lastInteraction: 0 }, 1000, cfg)
+  check(atThreshold.drifting === true, 'exactly at the threshold she drifts')
+  const past = pet.idleDrift({ ...base, lastInteraction: 0 }, 1001, cfg)
+  check(past.drifting === true, 'one ms past the threshold she drifts')
+
+  // The nearest corner: left/top when she is in the left/top half, else right/bottom.
+  const topLeft = pet.idleDrift({ position: { x: 10, y: 10 }, lastInteraction: 0 }, 5000, cfg).target
+  check(topLeft.x === pet.MIN_POS && topLeft.y === pet.MIN_POS, `a pet near the top-left drifts to the top-left corner (got ${JSON.stringify(topLeft)})`)
+  const bottomRight = pet.idleDrift({ position: { x: 90, y: 90 }, lastInteraction: 0 }, 5000, cfg).target
+  check(bottomRight.x === pet.MAX_POS && bottomRight.y === pet.MAX_POS, `a pet near the bottom-right drifts to that corner (got ${JSON.stringify(bottomRight)})`)
+  const mixed = pet.idleDrift({ position: { x: 10, y: 90 }, lastInteraction: 0 }, 5000, cfg).target
+  check(mixed.x === pet.MIN_POS && mixed.y === pet.MAX_POS, 'each axis picks its own nearest corner')
+
+  /**
+   * THE PROPERTY THAT MATTERS: drift is visual only.
+   *
+   * If a drift wrote into x/y it would overwrite the spot the user chose, which is
+   * the one thing a "remember where I left it" pet must never do. So: the result
+   * says persist:false, the input object is not mutated, and the position it reports
+   * as its origin is the stored one.
+   */
+  const stored = { position: { x: 20, y: 70 }, lastInteraction: 0 }
+  const before = JSON.stringify(stored)
+  const drift = pet.idleDrift(stored, 5000, cfg)
+  check(drift.persist === false, 'the drift result says persist:false')
+  check(JSON.stringify(stored) === before, 'the drift does not mutate the state it was given')
+  check(
+    drift.from.x === stored.position.x && drift.from.y === stored.position.y,
+    `the drift starts from the STORED position (got ${JSON.stringify(drift.from)})`,
+  )
+  check(
+    drift.target.x !== drift.from.x || drift.target.y !== drift.from.y,
+    'and its target differs from the stored position',
+  )
+  // Nothing on the drift result is shaped like a state update the client would post.
+  check(
+    drift.x === undefined && drift.y === undefined,
+    'the drift exposes no x/y of its own for a caller to mistake for a position',
+  )
+  check(
+    !JSON.stringify(drift).includes('"skin"') && !JSON.stringify(drift).includes('"persist":true'),
+    'and nothing in the result looks like a persisted state patch',
+  )
+
+  // Interaction cancels it; reduced motion disables it entirely.
+  const touched = pet.idleDrift({ ...base, lastInteraction: 4999 }, 5000, cfg)
+  check(touched.drifting === false, 'an interaction one ms ago cancels the drift')
+  const still = pet.idleDrift({ ...base, lastInteraction: 0, reducedMotion: true }, 5000, cfg)
+  check(still.drifting === false, 'prefers-reduced-motion disables the drift (it is movement)')
+  check(still.persist === false, 'and the reduced-motion result is still non-persistent')
+  check(pet.idleDrift({ ...base, lastInteraction: 0 }, 5000, { idleDriftMs: 0 }).drifting === false, 'a zero drift delay disables it')
+
+  // The line fires ONCE per drift: started only while it has not been announced.
+  const first = pet.idleDrift({ ...base, announced: false }, 5000, cfg)
+  check(first.started === true, 'the first idle tick after the threshold reports started')
+  const again = pet.idleDrift({ ...base, announced: true }, 5000, cfg)
+  check(again.drifting === true && again.started === false, 'once announced, a tick drifts without speaking again')
+  check(first.reason === 'idle' && still.reason === 'reduced-motion', 'the result says why it did or did not drift')
+  const pool = pet.PERSONA_LINES['idle-drift']
+  check(Array.isArray(pool) && pool.length >= 1, 'there is copy for the drift')
+}
+
 out.log('\nthe client and the host agree on every coordinate:')
 {
   /**

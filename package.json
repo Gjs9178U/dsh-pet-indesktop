@@ -1,7 +1,7 @@
 {
   "name": "dsh-pet-indesktop",
-  "version": "0.3.0",
-  "description": "给 DSH 网页界面加一只叫「大肥鱼」的桌宠，八种配色皮肤可以随时切换（深海蓝 / 樱花粉 / 薄荷绿 / 暮光紫 / 焦糖金 / 雪白银 / 墨黑 / 余烬红）：它会上下浮动、左右摇摆、缓慢呼吸，记得你把它放在哪，点一下会说一句中英双语的话，还能拖到任意位置。画面是八张随插件分发的 PNG，由插件自己提供。A desktop pet called \"Big Fat Fish\" (大肥鱼) for the DSH web GUI, with eight switchable colour skins (deepsea, sakura, mint, twilight, caramel, silver, ink, ember): it bobs, sways and slowly breathes, remembers where you left it, says one bilingual line when clicked, and can be dragged anywhere. The eight images are PNGs bundled with the plugin and served by the plugin itself.",
+  "version": "0.4.0",
+  "description": "给 DSH 网页界面加一只叫「大肥鱼」的桌宠（鲸鲸），八种配色皮肤随时切换，并且有性格：她只吃米饭、聪明但懒、嘴硬心软；被连点几次就躺平不干了，被叫「大肥鱼」会生气并坚持自己不胖，叫「鲸鲸」才高兴，十分钟没人理就游去角落（只改视觉，不改你放她的位置）。A desktop pet called \"Big Fat Fish\" (nickname Jingjing) for the DSH web GUI, with eight switchable colour skins and a personality: she eats rice, is clever but lazy, and is a tsundere. Too many rapid clicks and she lies down and refuses to react; calling her \"fat\" annoys her and she insists she is not; the nickname 鲸鲸 pleases her; ten quiet minutes and she drifts to a corner — visually only, never moving the position you chose. The eight images are PNGs bundled with the plugin and served by the plugin itself.",
   "type": "module",
   "main": "./lib/index.js",
   "types": "./lib/types/index.d.ts",

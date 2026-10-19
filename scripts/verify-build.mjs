@@ -165,7 +165,7 @@ console.log('\npackage.json — an installable DSH plugin:')
 {
   const pkg = JSON.parse(read('package.json'))
   check(pkg.name === 'dsh-pet-indesktop', `name is dsh-pet-indesktop (got ${String(pkg.name)})`)
-  check(pkg.version === '0.3.0', `version is 0.3.0, the skins release (got ${String(pkg.version)})`)
+  check(pkg.version === '0.4.0', `version is 0.4.0, the personality release (got ${String(pkg.version)})`)
   check(pkg.type === 'module', 'type is module')
   check(pkg.license === 'BSD-3-Clause', `license is BSD-3-Clause (got ${String(pkg.license)})`)
   check(pkg.author === 'Gjs9178U', `author is Gjs9178U (got ${String(pkg.author)})`)

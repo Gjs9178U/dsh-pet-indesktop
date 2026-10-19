@@ -9,7 +9,11 @@
 > (mouse or touch) and it remembers where you left it. **Click it** and it says one line, Chinese over English, which
 > disappears by itself. A "桌宠 开 / 关" button in the sidebar footer hides it and brings it back.
 >
-> How it is drawn: **one PNG shipped with the plugin**, served by the plugin's own host half
+> It is called **大肥鱼 / "Big Fat Fish"**, and it has **eight colour skins** you can switch between at any time:
+> deepsea, sakura, mint, twilight, caramel, silver, ink, ember. You pick one from the panel above the sidebar button;
+> the choice is stored on the host, so it survives a reload. She also has a **personality** — see below.
+>
+> How it is drawn: **eight PNGs shipped with the plugin**, served by the plugin's own host half
 > (`/dsh-pet-indesktop/assets/skins/<id>.png`), with the motion in CSS around them. **There are no third-party requests**:
 > image, script and styles all come from the same package and the same process.
 >
@@ -66,6 +70,42 @@ function**: `nextPose(state, event, now)`, `poseAt(now, options)`, `stanceAt(sta
 `swayAt`, `breathAt`. The component is a thin renderer over them, so `scripts/verify-pet.mjs` can drive the whole
 matrix with numbers and never needs a browser. The pattern is copied from the sibling plugin
 `dsh-boot-animation`'s `decidePlay`, which is the one that survived contact with a real host.
+
+## Personality / 性格
+
+She is not an animated sticker; she is a whale with a temper. **The personality is behaviour, not lore** — every
+row below is visible in the UI, and every row is asserted by `scripts/verify-pet.mjs`. The lines come from the
+author's copy table and are shipped verbatim, character for character.
+
+| Trait | How it shows up on screen |
+| --- | --- |
+| **Eats rice** | Rice shows up in what she says: "Rice. Go get it." / "This earns an egg on the rice." / "Hmph. Half your rice is forfeit." |
+| **Clever but lazy** | Click her several times quickly (4 times within 2.6s by default) and she **lies down** and says "Done for today. Going flat." While she is down, clicking her **does not open a bubble**; after 6s by default she gets up on her own |
+| **Tsundere: prickly, then soft** | She deflects and then softens anyway: "…Mm. That one is allowed." / "Say it again." — or replaces words with a gesture: "(Two soft tail-flicks.)" |
+| **Refuses being called 大肥鱼** | The "叫它 大肥鱼" button makes her angry, and she **insists she is not fat**: "Who is fat? This is buoyancy." / "A whale is not fat, a whale is rounded. Say it again. Try me." / "Tail-fin warning." |
+| **Answers to 鲸鲸** | The "叫它 鲸鲸" button is the only name she is pleased by; her tail gives her away |
+
+**The two call buttons** live in the sidebar panel, directly under the eight swatches: "叫它 大肥鱼" and
+"叫它 鲸鲸". They are the only route to the tsundere reaction, which is why they are real buttons rather than an
+easter egg, and each carries a bilingual `aria-label`.
+
+**What lying down looks like:** she is **squashed slightly and tilted**, and the bob, sway and breathe animations
+stop — a pet that keeps floating up and down is not lying down. This is a CSS transform only: **no new image
+assets**, and all eight skins keep working.
+
+**The corner drift:** after **ten minutes** with no interaction she slowly swims to the nearest corner (a
+`transform` transition) and says "Nobody is around. Corner it is." **This is visual only and does not move the
+position you put her in** — not one byte of `x`/`y` in `state.json` changes, so she is back where you left her after
+a reload. Any interaction (drag, click, calling her, a skin switch, opening the panel) cancels the drift at once.
+The test asserts this the hard way: the drift function returns `persist:false` and does **not mutate** the state
+object passed to it.
+
+A skin switch earns a remark ("Just changing clothes. Do not make a thing of it."), and she greets you the first
+time she appears ("...You are here. Where is the rice?"). Both use the same bubble mechanism.
+
+**Voice rules** (fixed in the copy table and repeated in `ARCHITECTURE.md`): never self-references as software;
+refusing "fat" must never become an insult — forfeiting rice is the escalation ceiling; one emotional beat per
+bubble, with the softening, if any, second.
 
 ## Why the client artifact is wrapped in `window.__ModuleLoader__.load({...})`
 
@@ -234,6 +274,33 @@ your change silently does not ship.
 `scripts/check-css-template.mjs` exists for that, and it checks **both copies**. This time it earned its keep: the
 pet's sheet really did contain a backtick, and the guard reported the exact line.
 
+## The eight skins
+
+The button in the sidebar footer opens a small panel: **show/hide on top, eight colour swatches under it**, then
+the two call buttons. Clicking a swatch changes the picture immediately and POSTs the choice to the host, so the
+skin survives a reload, a DSH restart and a different browser.
+
+| id | Name | Look |
+| --- | --- | --- |
+| `deepsea` | 深海蓝 / Deep Sea | the original blue |
+| `sakura` | 樱花粉 / Sakura | pink |
+| `mint` | 薄荷绿 / Mint | mint green |
+| `twilight` | 暮光紫 / Twilight | purple |
+| `caramel` | 焦糖金 / Caramel | amber / gold |
+| `silver` | 雪白银 / Silver | pale silver hair |
+| `ink` | 墨黑 / Ink | near-black navy |
+| `ember` | 余烬红 / Ember | red |
+
+**Switching a skin does not restart the animation.** It changes only the `<img>` `src`; the three wrapper divs
+(sway / bob / breathe) stay mounted, so the pet does not jump — asserted by `scripts/verify-client-boot.mjs`, which
+checks the `<img>` carries no React `key` so the element is reused rather than rebuilt.
+
+**The id is a key into an allow-list, not a path segment.** The client and the host each hold the same eight ids
+(the browser half cannot import the host half), and `scripts/build.mjs` checks those two lists **and** the contents
+of `assets/skins/` against each other — one missing or one extra fails the build instead of shipping a swatch that
+404s. The host builds the file path from **the entry it found in the list**, never from the request text (see
+`ARCHITECTURE.md`).
+
 ## Build
 
 ```bash
@@ -243,9 +310,12 @@ node scripts/build.mjs
 It copies `src/host/*.js` to `lib/host/*.js` (pruning stale modules), writes the one-line `lib/index.js` shim
 (`export * from './host/index.js'`), **copies** `src/client/index.js` to `lib/client.js` behind a generated
 banner, refuses to ship anything that is not in the `window.__ModuleLoader__.load({ ... })` shape or that contains
-an ESM statement, **copies `assets/*.png` to `lib/assets/*.png`** (same stale-pruning, byte for byte, PNG magic
-bytes checked), rewrites `lib/.build-manifest.json` (which now records the assets and their total size), and asserts
-the two copies of the sheet agree.
+an ESM statement, **copies `assets/skins/*.png` to `lib/assets/skins/*.png`** (same stale-pruning, byte for byte,
+PNG magic bytes checked), rewrites `lib/.build-manifest.json` (which records the skin ids and their total size), and
+asserts the two copies of the sheet agree.
+
+It also **cross-checks the three places a skin is listed**: the files in `assets/skins/`, the client's `SKIN_IDS`,
+and the host's allow-list. Adding a skin to one and forgetting another is a build failure, not a 404 swatch.
 
 `lib/` is the only directory the package ships, so the artwork has to end up at `lib/assets/skins/` — which is
 exactly the file the host half reads and the URL the client asks for. `scripts/verify-build.mjs` asserts all three:
@@ -286,7 +356,7 @@ lib/.build-manifest.json        what is actually in lib/
 scripts/                        the build + verifiers
 submission/data/plugins/...     market submission file
 ARCHITECTURE.md                 the plumbing rules, and the reasons behind them
-CHANGELOG.md                    0.2.0: the pet is the real artwork now
+CHANGELOG.md                    0.4.0: the persona
 LICENSE                         BSD-3-Clause, plus the note on the artwork's provenance
 ```
 
@@ -299,7 +369,11 @@ LICENSE                         BSD-3-Clause, plus the note on the artwork's pro
 - **Dragging, pointer events and touch are not exercised either**: those need a real DOM. What IS verified is the
   decision matrix (clamping, poses, line selection) plus the parts that do not need rendering — the seats, the
   stylesheet, the idle path, the asset route and disposal.
-- The pet is **one PNG + CSS**: no video, no third-party requests, no sound.
+- The pet is **eight PNGs + CSS**: no video, no third-party requests, no sound.
+- **The eight skins are derived recolourings** of one drawing (per-region hue/saturation/value on the hair, fin and
+  tail, a multiplicative tint on the pale sleeves and cup), not eight separately drawn pieces.
+- **The personality is data and the copy is the deliverable**: the lines are shipped verbatim, so they are checked
+  for shape (both languages, bubble-sized, no software self-reference, no self-fat joke) rather than rewritten.
 - **The artwork is not this project's own**: it carries an "OleapCrow" mark and was supplied by the repository owner
   (see `LICENSE`). The animation timings are this project's design decisions and have not been user-tested.
 
