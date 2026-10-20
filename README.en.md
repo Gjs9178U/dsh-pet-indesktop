@@ -274,6 +274,37 @@ your change silently does not ship.
 `scripts/check-css-template.mjs` exists for that, and it checks **both copies**. This time it earned its keep: the
 pet's sheet really did contain a backtick, and the guard reported the exact line.
 
+### She remembers you / 她会记着你
+
+The five traits above are her temper in the moment. These three are **cross-session**: they live in five counters
+inside `state.json`, so a page reload, a DSH restart or a different browser does not reset how today went. They are
+also the three traits that are commonly recognised for this archetype and cheap to implement honestly.
+
+| Trait | How you earn it | How she treats you |
+| --- | --- | --- |
+| **Holds grudges** | called "大肥鱼" **3 times today** | cold on your return: "...You again. We are not discussing fat today." / "Hmph. I am keeping count." |
+| **Holds favours** | called "鲸鲸" **3 times today** | warm, while denying it: "...You are here. You may call me it once today." / "I cooked half a cup extra." |
+| **Clings after an absence** | away for more than **30 minutes** | "I was not waiting for you. The water just went cold." / "...You were gone a while." |
+| **Shy on first meetings** | fewer than **3 interactions ever** | "...(hiding behind the cup)" / "...New here?" / "Do not come too close." |
+
+**The priority is fixed: cold > warm > reunited > shy > normal.** A day that earned both a grudge and a favour gets
+the cold greeting — **grudges outlast affection**. That ordering is not decorative: `scripts/verify-pet.mjs` pins all
+five outcomes and every boundary one unit either side (fatCalls 2 vs 3, **exactly** 30 minutes of absence, a midnight
+crossing, interactions 2 vs 3).
+
+**How the counting works:** `fatCalls` and `nickCalls` only count the times she actually reacted (a click absorbed by
+her nap does not count, so the counters cannot be farmed); `totalInteractions` counts real pokes; `lastSeenAt`
+records the last visit. Everything resets at **local midnight**, with `countersDay` recording which day the counters
+belong to. The numbers are capped (100,000) and refuse negatives, so a hand-edited `state.json` cannot inject an
+absurd value — and a broken one heals instead of making her vanish.
+
+**One honest gap (待确认 / to be confirmed):** this archetype is also commonly said to *sense* the DSH state — quiet
+while you are busy, affectionate when you are idle. **Not implemented**, because I could not verify that the host
+exposes a trustworthy "busy" field: the only things read off `uiSession.adapter.current` in the material available
+to me are `sessionId` and `blank` — no busy / streaming / status. Rather than invent a guessed field, the trait is
+left out and recorded in `ARCHITECTURE.md` as 待确认.
+
+
 ## The eight skins
 
 The button in the sidebar footer opens a small panel: **show/hide on top, eight colour swatches under it**, then

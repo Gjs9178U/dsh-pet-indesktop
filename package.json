@@ -1,7 +1,7 @@
 {
   "name": "dsh-pet-indesktop",
-  "version": "0.4.0",
-  "description": "给 DSH 网页界面加一只叫「大肥鱼」的桌宠（鲸鲸），八种配色皮肤随时切换，并且有性格：她只吃米饭、聪明但懒、嘴硬心软；被连点几次就躺平不干了，被叫「大肥鱼」会生气并坚持自己不胖，叫「鲸鲸」才高兴，十分钟没人理就游去角落（只改视觉，不改你放她的位置）。A desktop pet called \"Big Fat Fish\" (nickname Jingjing) for the DSH web GUI, with eight switchable colour skins and a personality: she eats rice, is clever but lazy, and is a tsundere. Too many rapid clicks and she lies down and refuses to react; calling her \"fat\" annoys her and she insists she is not; the nickname 鲸鲸 pleases her; ten quiet minutes and she drifts to a corner — visually only, never moving the position you chose. The eight images are PNGs bundled with the plugin and served by the plugin itself.",
+  "version": "0.5.0",
+  "description": "给 DSH 网页界面加一只叫「大肥鱼」（昵称「鲸鲸」）的桌宠，八种配色皮肤随时切换，并且有性格：只吃米饭、聪明但懒、嘴硬心软；被连点几次会躺平，被叫「大肥鱼」会生气并坚持自己不胖，叫「鲸鲸」才高兴；她记仇也记好——今天被叫胖三次就冷淡，被叫昵称三次就亲近；离开半小时再回来她会嘴硬地说「才不是等你」；头几次见面她怕生；十分钟没人理就游去角落（只改视觉，不改你放她的位置）。A desktop pet called \"Big Fat Fish\" (nickname Jingjing) for the DSH web GUI, with eight switchable colour skins and a personality: she eats rice, is clever but lazy, and is a tsundere. Rapid clicks make her lie down and refuse to react; calling her fat annoys her and she insists she is not; the nickname 鲸鲸 pleases her. She keeps count both ways - three fat-calls today and she greets you cold, three nickname-calls and she greets you warm; come back after half an hour and she greets you with \"I was not waiting for you\"; the first few meetings she is shy; ten quiet minutes and she drifts to a corner, visually only, never moving the position you chose. The eight images are PNGs bundled with the plugin and served by the plugin itself.",
   "type": "module",
   "main": "./lib/index.js",
   "types": "./lib/types/index.d.ts",

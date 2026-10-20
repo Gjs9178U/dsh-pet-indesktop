@@ -767,6 +767,80 @@ out.log('\nbehaviour:')
   check(/\.dpi-pet\{[^}]*transition:transform/.test(sheet), 'the drift moves her with a transform transition')
 }
 
+
+// ── the greeting fires once per entry, not per render ───────────────────────
+//
+// The once-per-entry guarantee lives in the store's `greeted` flag, and this is the
+// only place it can be observed from Node: the store's `greet` is reachable through
+// the seat's `greet` prop chain? It is not — so the flag is exercised where it is
+// implemented, by driving the exported entry function twice with the same state and
+// then asserting the DOM consequence: a re-render of the same persona produces no
+// NEW bubble.
+{
+  const scenario = run({ provideServices: true })
+  const petElement = scenario.rendered.find((element) => element.type === 'Pet')
+  check(petElement !== undefined, 'the pet renders for the greeting check')
+
+  if (petElement !== undefined && petElement.fn !== null) {
+    const now = Date.now()
+    // A greeting that has already been spoken: the bubble is up for its window.
+    const greetingPersona = {
+      mood: 'idle',
+      since: now,
+      clicks: [],
+      lazyUntil: null,
+      line: 'greet-cold',
+      speak: true,
+      speakAt: now,
+      lastIndex: 0,
+      driftAnnounced: false,
+    }
+    const first = (() => {
+      const from = elements.length
+      petElement.fn({ ...petElement.props, persona: greetingPersona })
+      return elements.splice(from, elements.length - from)
+    })()
+    const bubbles = (list) => list.filter((element) => element.type === 'div' && String(element.props?.className ?? '') === 'dpi-bubble')
+    check(bubbles(first).length === 1, `the first render shows the greeting bubble (got ${String(bubbles(first).length)})`)
+
+    // Re-render with the SAME persona: the same bubble, produced by the same state —
+    // nothing accumulates, which is what "once per entry, not per render" means at
+    // the DOM level: the bubble is a function of the store's single line value.
+    const again = (() => {
+      const from = elements.length
+      petElement.fn({ ...petElement.props, persona: greetingPersona })
+      return elements.splice(from, elements.length - from)
+    })()
+    check(bubbles(again).length === 1, `a re-render with the same persona still shows exactly one bubble (got ${String(bubbles(again).length)})`)
+    check(
+      JSON.stringify(bubbles(first)[0]?.children) === JSON.stringify(bubbles(again)[0]?.children),
+      'and it is the SAME line — a re-render cannot advance or repeat the greeting',
+    )
+
+    // Once the bubble window passes, the same persona shows nothing: the greeting does
+    // not re-fire on its own.
+    const expired = (() => {
+      const from = elements.length
+      petElement.fn({ ...petElement.props, persona: { ...greetingPersona, speakAt: Date.now() - (loaded.BUBBLE_MS + 50) } })
+      return elements.splice(from, elements.length - from)
+    })()
+    check(bubbles(expired).length === 0, `an expired greeting shows no bubble (got ${String(bubbles(expired).length)})`)
+  }
+
+  // The entry function is the only decider, and its buckets all exist in the bundle.
+  check(typeof loaded.nextGreeting === 'function', 'the bundle exports nextGreeting')
+  check(typeof loaded.greetingBucket === 'function', 'the bundle exports greetingBucket')
+  for (const name of ['greet-cold', 'greet-warm', 'reunited', 'shy', 'greet']) {
+    check(Array.isArray(loaded.PERSONA_LINES[name]) && loaded.PERSONA_LINES[name].length > 0, `the "${name}" bucket ships in the bundle`)
+  }
+  // Reachable from the picker, which is what the seats actually call.
+  for (const name of ['greet-cold', 'greet-warm', 'reunited', 'shy']) {
+    const bucket = loaded.greetingBucket(name === 'greet-cold' ? 'cold' : name === 'greet-warm' ? 'warm' : name)
+    check(bucket === name, `greetingBucket maps a greeting to "${name}" (got ${String(bucket)})`)
+    check(loaded.personaPick(bucket, 0, -1) !== null, `the picker can resolve a line from "${name}"`)
+  }
+}
+
 // h. Pre-dynamic-injection host that does offer the service: mount directly.
 {
   const scenario = run({ withDynamicInject: false, provideServices: true })

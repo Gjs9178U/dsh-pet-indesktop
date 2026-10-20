@@ -528,6 +528,116 @@ console.log('\nstate — the skin round-trips, and a bad one cannot break the pe
   check((await readState()).json?.state?.skin === 'twilight', 'and the chosen skin is stored')
 }
 
+console.log('\nthe persona counters — persisted, clamped, healed and upgraded:')
+{
+  // The counters section writes raw JSON to the state file to prove the read side
+  // heals; `limits` is already the host's exported limits object.
+  const writeStateFile = (value) => writeFileSync(STATE_FILE, JSON.stringify(value, null, 2) + '\n', 'utf8')
+  const today = limits.todayStamp()
+
+  // 1. A fresh state carries zeros and an empty day stamp, not undefined.
+  const fresh = await readState()
+  check(fresh.code === 200, `GET state.json -> 200 (got ${String(fresh.code)})`)
+  for (const key of ['fatCalls', 'nickCalls', 'totalInteractions']) {
+    check(fresh.json?.state?.[key] === 0, `a fresh state starts with ${key} = 0 (got ${String(fresh.json?.state?.[key])})`)
+  }
+  check(fresh.json?.state?.lastSeenAt === 0, 'a fresh state starts with lastSeenAt = 0 (never seen)')
+  check(typeof fresh.json?.state?.countersDay === 'string', 'a fresh state carries a countersDay string')
+
+  // 2. Round trip: every counter survives a POST and comes back.
+  const post = await postState({ fatCalls: 2, nickCalls: 1, countersDay: today, lastSeenAt: 1736000000000, totalInteractions: 7 })
+  check(post.code === 200, `POST of the counters -> 200 (got ${String(post.code)})`)
+  check(post.json?.state?.fatCalls === 2, 'the reply reports the new fatCalls')
+  const back = (await readState()).json?.state
+  check(back?.fatCalls === 2 && back?.nickCalls === 1, 'the counters round-trip through the file')
+  check(back?.totalInteractions === 7, 'totalInteractions round-trips')
+  check(back?.countersDay === today, `countersDay round-trips (got ${String(back?.countersDay)})`)
+  check(back?.lastSeenAt === 1736000000000, 'lastSeenAt round-trips')
+
+  // 3. A partial update touches only what it names.
+  const partial = await postState({ fatCalls: 3 })
+  check(partial.code === 200, 'a single-counter update is accepted')
+  const afterPartial = (await readState()).json?.state
+  check(afterPartial?.fatCalls === 3, 'the named counter changed')
+  check(afterPartial?.nickCalls === 1, 'the unnamed counters survived')
+  check(afterPartial?.totalInteractions === 7, 'totalInteractions survived a fatCalls-only update')
+
+  // 4. Clamping: a hand-edited absurd value cannot ship.
+  const huge = await postState({ fatCalls: limits.MAX_COUNTER + 5000 })
+  check(huge.code === 200, 'an over-cap counter is accepted and clamped')
+  check(huge.json?.state?.fatCalls === limits.MAX_COUNTER, `it clamps to MAX_COUNTER (got ${String(huge.json?.state?.fatCalls)})`)
+  check(
+    Array.isArray(huge.json?.issues) && huge.json.issues.some((issue) => /cap/.test(issue)),
+    'and says it clamped',
+  )
+  const negative = await postState({ nickCalls: -4 })
+  check(negative.json?.state?.nickCalls === 0, `a negative counter clamps to 0 (got ${String(negative.json?.state?.nickCalls)})`)
+
+  // 5. Wrong types are rejected with a diagnostic.
+  for (const bad of [
+    ['fatCalls as a string', { fatCalls: '3' }],
+    ['nickCalls as null', { nickCalls: null }],
+    ['totalInteractions as a boolean', { totalInteractions: true }],
+    ['lastSeenAt as a string', { lastSeenAt: 'yesterday' }],
+    ['countersDay as a number', { countersDay: 20260115 }],
+    ['an unknown counter', { grudge: 1 }],
+  ]) {
+    const rejected = await postState(bad[1])
+    check(rejected.code === 400, `rejects ${bad[0]} with 400 (got ${String(rejected.code)})`)
+    const why = Array.isArray(rejected.json?.issues) ? rejected.json.issues.join('; ') : String(rejected.json?.error ?? '')
+    check(why !== '', `the rejection of ${bad[0]} names the field (${why.slice(0, 70)})`)
+  }
+
+  // 6. A bad countersDay HEALS rather than rejecting: it is bookkeeping, not input.
+  const healed = await postState({ countersDay: 'not-a-day' })
+  check(healed.code === 200, `a malformed countersDay is accepted and healed (got ${String(healed.code)})`)
+  check(healed.json?.state?.countersDay === today, `it heals to today (got ${String(healed.json?.state?.countersDay)})`)
+  check(
+    Array.isArray(healed.json?.issues) && healed.json.issues.some((issue) => /countersDay/.test(issue)),
+    'and the issue names countersDay',
+  )
+
+  // 7. A hand-edited FILE with a bad day heals on read, and the pet keeps its spot.
+  const spot = (await readState()).json?.state
+  writeStateFile({
+    version: 1,
+    visible: true,
+    x: 37,
+    y: 61,
+    name: '小深',
+    skin: 'mint',
+    fatCalls: 'lots',
+    nickCalls: -2,
+    countersDay: '99-99-99',
+    lastSeenAt: -1,
+    totalInteractions: 999999999,
+  })
+  const healedFile = await readState()
+  check(healedFile.code === 200, `a hand-edited file still answers 200 (got ${String(healedFile.code)})`)
+  const s = healedFile.json?.state
+  check(healedFile.json?.healed === true, 'the read reports itself healed')
+  check(s?.countersDay === today, `the bad day heals to today (got ${String(s?.countersDay)})`)
+  check(s?.fatCalls === 0, `a string fatCalls heals to 0 (got ${String(s?.fatCalls)})`)
+  check(s?.nickCalls === 0, `a negative nickCalls heals to 0 (got ${String(s?.nickCalls)})`)
+  check(s?.lastSeenAt === 0, `a negative lastSeenAt heals to 0 (got ${String(s?.lastSeenAt)})`)
+  check(s?.totalInteractions === limits.MAX_COUNTER, `an absurd totalInteractions clamps (got ${String(s?.totalInteractions)})`)
+  // The counters are bookkeeping: healing them must not cost the user the pet's spot.
+  check(s?.x === 37 && s?.y === 61, `healing the counters kept the position (got ${String(s?.x)},${String(s?.y)})`)
+  check(s?.skin === 'mint', 'and kept the skin')
+
+  // 8. A 0.4.0-shaped file (no counter keys at all) upgrades silently.
+  writeStateFile({ version: 1, visible: true, x: 50, y: 50, name: '小深', skin: 'sakura' })
+  const upgraded = await readState()
+  const u = upgraded.json?.state
+  check(upgraded.code === 200, `a 0.4.0-shaped file answers 200 (got ${String(upgraded.code)})`)
+  check(upgraded.json?.healed === false, 'a 0.4.0-shaped file is NOT reported as healed — nothing was wrong with it')
+  check(u?.fatCalls === 0 && u?.nickCalls === 0 && u?.totalInteractions === 0, 'the counters default to 0')
+  check(u?.lastSeenAt === 0, 'lastSeenAt defaults to 0')
+  check(u?.x === 50 && u?.y === 50 && u?.skin === 'sakura', 'the 0.4.0 fields are untouched')
+  // And writing on top of an upgraded file works.
+  check((await postState({ fatCalls: 1 })).code === 200, 'a counter can be written after the upgrade')
+}
+
 console.log('\nthe skins — served by this plugin, cached by ETag:')
 {
   const ids = limits.SKIN_IDS

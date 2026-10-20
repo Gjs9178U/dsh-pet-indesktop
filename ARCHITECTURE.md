@@ -264,6 +264,62 @@ pathname !== prefix && !pathname.startsWith(prefix + '/')
 `transform` 目标。如果它写了 `x`/`y`，用户放她的位置就会被悄悄改掉——那是"记得我把她放哪"这个功能唯一不能犯的错。
 `verify-pet.mjs` 对这一点有硬断言（返回值非持久 + 入参未被修改 + 起点就是存储位置）。
 
+## 6.9 记仇 / 记好 / 黏人 / 怕生：五个计数和一个入口函数
+
+0.5.0 加的三条性格**跨会话**，所以它们必须持久化。`state.json` 里多了五个字段：
+
+| 字段 | 含义 | 校验 |
+| --- | --- | --- |
+| `fatCalls` | 今天被叫「大肥鱼」的次数 | 非负整数，上限 100000，负数夹到 0 |
+| `nickCalls` | 今天被叫「鲸鲸」的次数 | 同上 |
+| `countersDay` | 这组计数属于哪一天（`YYYY-MM-DD`，**本地时间**） | 形状不对就自愈成今天 |
+| `lastSeenAt` | 上次见面（epoch ms，0 = 从没见过） | 非负；比现在晚一天以上算时钟偏差，夹回 |
+| `totalInteractions` | 累计交互次数 | 同上，上限 100000 |
+
+**为什么用本地时间**：用户说的「今天」是本地的那一天。晚上 11 点被叫三次胖、凌晨 1 点再来，两天就是两天。
+校验脚本用 `new Date(y, m, d, ...)` 造时间戳，所以矩阵结果与机器时区无关。
+
+**入口函数 `nextGreeting(state, now, config)`**，优先级写死在代码里、也写死在测试里：
+
+```
+1. 日期翻篇     countersDay !== today(now)  → 两个计数清零，重记今天（结果里能看到 rolledOver）
+2. cold         fatCalls  >= coldAfter (3)
+3. warm         nickCalls >= warmAfter (3)
+4. reunited     lastSeenAt > 0 且 now - lastSeenAt > reuniteMs (30 min)
+5. shy          totalInteractions < shyUntil (3)
+6. normal
+```
+
+**仇比好记得久**：同一天既攒够冷又攒够暖，给的是冷脸 —— 这是刻意的，也是断言过的。
+**`lastSeenAt` 为 0 不算久别**：那是「从没见过你」，如果用「现在减 0」去判，第一次见面就会说「才不是等你」，
+那是自言自语。所以 0 直接跳过，交给 shy。
+**边界**：`=` 用半开（`>=`），`>` 用严格：离开**恰好** 30 分钟不算久别，多一毫秒才算。
+
+**入口只触发一次**：`mountPet` 里有一个 `greeted` 标志，`greet()` 第二次调用直接返回 `null`。
+所以「一次会话一次招呼」不是靠渲染次数运气，而是一个布尔量 —— `verify-client-boot.mjs` 用「同一份 persona
+重渲染两次，气泡仍然是同一个、不会累加」来断言它的 DOM 结果。
+
+**为什么不在 mount 时立刻打招呼**：cold / warm / reunited 都需要宿主的计数，而计数是异步取回来的。
+挂载时打招呼等于对她说谎——她会「记得」一件还不知道的事。所以招呼是在宿主的 `state.json` 回来之后
+（哪怕是「没有这个文件」或者请求失败，那时用默认值）才决定的。
+
+**计数只记她真的回应了的那次**：躺平期间被吸收的点击不计数，否则用户可以躺着刷 `totalInteractions`。
+
+### 待确认：感知 DSH 状态（没做）
+
+这类角色公认还有一条「你在忙她就不打扰」。**这一条没有实现，因为我没有验证到可信字段。** 具体地：
+
+- 本仓库对 `uiSession` 的全部了解只有 `ready.uiSession !== undefined`；
+- 姊妹插件的已发布产物（`.ref/lib__client.js`）从 `session 快照` 里只读 `sessionId` 和 `blank` /
+  `blankBit` 两个东西；
+- 那里面确实出现过 `snapshot.busy` / `snapshot.status`，但它们属于**该插件自己的 ClientStore**
+  （旁边就是它自己的 `catalog` / `playback` / `settingsLoaded`），不是会话快照；
+- DSH 实现本身打包在 `resources/app.asar` 里，没有解包，所以无法直接读它的会话类型定义。
+
+所以结论是**没有证据表明存在一个可信的「忙碌」信号**，而不是「确信不存在」。
+**不硬编一个猜出来的字段**：猜错的代价是她在你忙的时候反而来打扰，比不做更糟。
+等有一天确认了字段（或者宿主文档给了），这条可以补上——那时它只是一个纯函数参数的增量。
+
 ## 7. CSS 模板字符串：不要放反引号
 
 样式表放在模板字符串里，就在**浏览器半边的唯一源文件** `src/client/index.js`（产物 `lib/client.js`）。
@@ -296,7 +352,7 @@ node scripts/build.mjs                # 宿主复制 + 客户端复制（带横�
 node scripts/verify-build.mjs         # 产物齐全；lib/client.js = 源码 + 横幅；入口导出的性质
 node scripts/verify-routes.mjs        # 路由可达；状态校验/自愈/原子写；八个皮肤 200/304/404 + 白名单与穿越
 node scripts/verify-client-boot.mjs   # 产物无静态 inject；两个座位；四种服务情形；卸载
-node scripts/verify-pet.mjs           # 纯函数：夹取、姿态、减少动态、皮肤白名单、性格矩阵与「肥」自指守卫
+node scripts/verify-pet.mjs           # 纯函数：夹取、姿态、减少动态、皮肤白名单、性格矩阵、入口函数矩阵与「肥」守卫
 ```
 
 六个脚本都不需要安装依赖，也不运行打包器 —— 这正是这个骨架能被验证的原因。

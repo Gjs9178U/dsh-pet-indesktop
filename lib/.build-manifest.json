@@ -1,5 +1,5 @@
 {
-  "builtAt": "2026-10-19T14:49:00.763Z",
+  "builtAt": "2026-10-19T15:34:05.992Z",
   "generator": "scripts/build.mjs (host copy + client copy with banner + skin copy + manifest)",
   "host": [
     "index.js"
@@ -22,5 +22,5 @@
     "types/index.d.ts",
     "types/client/index.d.ts"
   ],
-  "clientBundleBytes": 74624
+  "clientBundleBytes": 86599
 }

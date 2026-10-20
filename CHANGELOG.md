@@ -5,6 +5,62 @@ All notable changes to this project are documented here.
 
 ---
 
+## 0.5.0 — 2026-01-05
+
+### 记仇、记好、黏人、怕生：她会记着你了 / She remembers you now
+
+0.4.0 的性格是「当下」的脾气；0.5.0 加的三条**跨会话**，靠 `state.json` 里的五个计数活下来。
+台词仍然照作者写定的文案表，**逐字照搬**：v2 追加 12 条（`greet-cold` / `greet-warm` / `reunited` / `shy`
+各 3 条），总数 26 + 12 = **38 条**。
+
+### 新增 / Added
+
+- **五个持久化计数**：`fatCalls`、`nickCalls`、`countersDay`、`lastSeenAt`、`totalInteractions`。
+  - 非负整数、上限 100000、负数夹到 0；
+  - `countersDay` 是 `YYYY-MM-DD`（本地时间），形状不对**自愈成今天**；
+  - `lastSeenAt` 是 epoch ms，比现在晚一天以上按时钟偏差夹回；
+  - **0.4.0 的 state 文件没有这些键 → 静默升级**（每项都有默认值）；
+  - 校验仍然严格：未知键 400、类型不对 400 并说明。
+- **入口函数 `nextGreeting(state, now, config)`**：纯函数，时钟与配置都可注入。优先级
+  **cold > warm > reunited > shy > normal**：
+  - 今天被叫「大肥鱼」≥ 3 次 → `cold`；
+  - 今天被叫「鲸鲸」≥ 3 次 → `warm`（冷优先于暖：**仇比好记得久**）；
+  - 离开 > 30 分钟 → `reunited`（`lastSeenAt` 为 0 表示从没见过，不算久别）；
+  - 累计交互 < 3 次 → `shy`；
+  - 否则 `normal`。
+  - **日期翻篇**：`countersDay !== today` → 两个计数清零并重记今天，`rolledOver` 在返回值里可见。
+- **接线**：进会话时从宿主读计数，由入口函数决定用哪一桶招呼，**一次会话只打一次招呼**
+  （`greeted` 布尔量，重渲染不会重复）；`call-fat` / `call-nick` / `click` 各自加计数并即时 POST。
+  躺平期间被吸收的点击**不计数**，否则可以刷。
+- **拒绝实现「感知 DSH 状态」**：没有验证到可信的「忙碌」字段，标为**待确认**并写进 `ARCHITECTURE.md`；
+  不硬编猜出来的字段。
+
+### 修复 / Fixed
+
+- **`update()` 吞掉了本轮的 `issues`**：合并后的状态已经夹过一次（超上限、日期自愈），但写回时又
+  sanitize 一次，返回的 issues 只剩第二次的，于是**客户端收到 200 却不知道自己被夹过**。现在会带上。
+- **负数计数被拒绝**，而越界坐标是夹取的。现在一致：**范围用夹取，类型才拒绝**。
+
+### 校验 / Verification
+
+- `verify-pet.mjs`（742 → 975 条）：十三桶、38 条、双语非空、气泡长度、无软件自指、「肥」自指守卫覆盖新行；
+  **入口函数矩阵**（五种结局、优先级四条、`fatCalls` 2/3、`nickCalls` 2/3、离开 30min−1 / **恰好** / +1、
+  跨零点前后各一毫秒、`totalInteractions` 2/3、`lastSeenAt` 为 0、注入 config、不修改入参、垃圾输入不抛、
+  客户端与宿主的日期戳一致、新四桶每一条都可达）。
+- `verify-routes.mjs`（259 → 309 条）：五个计数往返、部分更新只改named 的那个、超上限夹取并说明、
+  负数夹到 0、六种错误类型各 400、坏的 `countersDay` 自愈并说明、手改文件五个字段全坏仍 200 且**保住坐标与皮肤**、
+  0.4.0 形状静默升级（`healed: false`）。
+- `verify-client-boot.mjs`（114 → 134 条）：招呼气泡**重渲染不累加、不重复、过期后不再出现**；
+  四桶都在产物里、都能从 picker 取到。
+
+### 已知限制 / Known limitations
+
+- **仍然没有在真实 DSH 宿主上安装验证过。** 计数与入口函数只在数据层与内存 handler 上验证过。
+- 招呼的**观感**、以及「你走挺久」在真实计时下是否真的出现，没有被浏览器验证过。
+- 「感知 DSH 状态」**没做**，原因见 `ARCHITECTURE.md` 的待确认一节。
+
+---
+
 ## 0.4.0 — 2026-01-04
 
 ### 性格：一只会生气的鲸鱼 / A personality: the whale has opinions now
@@ -56,7 +112,7 @@ All notable changes to this project are documented here.
 ### 八种配色皮肤 / Eight colour skins
 
 **桌宠现在叫「大肥鱼」/ "Big Fat Fish"，有八种皮肤可以随时切换。**
-**（历史：0.4.0 起她有了性格，台词与心情机见上。）**
+**（历史：0.4.0 起她有了性格，0.5.0 起她会记事，见上。）**
 0.2.0 只有一张图；0.3.0 把画面按区域重新配色，做出了八种读起来确实不同的样子
 （头发、鳍、尾巴和描线换色相/饱和度/明度；白色袖子、杯子和徽章做乘性着色；皮肤不动）。
 

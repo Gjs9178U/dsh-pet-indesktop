@@ -567,12 +567,27 @@ out.log('\nthe persona — the copy table, checked entry by entry:')
    * The copy is the deliverable, so it is checked as DATA: every bucket present,
    * every entry bilingual, and no entry allowed to put a fat joke in her own mouth.
    */
-  const BUCKETS = ['greet', 'click', 'call-fat', 'call-nick', 'lazy-start', 'lazy-click', 'lazy-end', 'idle-drift', 'skin-switch']
+  const BUCKETS = [
+    'greet',
+    'click',
+    'call-fat',
+    'call-nick',
+    'lazy-start',
+    'lazy-click',
+    'lazy-end',
+    'idle-drift',
+    'skin-switch',
+    // v2: the three extra traits (grudges/favours, reunion, shyness).
+    'greet-cold',
+    'greet-warm',
+    'reunited',
+    'shy',
+  ]
   const table = pet.PERSONA_LINES
   check(table !== null && typeof table === 'object', 'PERSONA_LINES is exported')
   check(
     JSON.stringify(Object.keys(table ?? {}).sort()) === JSON.stringify([...BUCKETS].sort()),
-    `the table has exactly the nine copy buckets (got ${Object.keys(table ?? {}).join(', ')})`,
+    `the table has exactly the thirteen copy buckets (got ${Object.keys(table ?? {}).join(', ')})`,
   )
 
   let entries = 0
@@ -611,8 +626,23 @@ out.log('\nthe persona — the copy table, checked entry by entry:')
   }
   // 26 lines: greet 3, click 4, call-fat 4, call-nick 4, lazy-start 3, lazy-click 2,
   // lazy-end 2, idle-drift 2, skin-switch 2.
-  check(entries === 26, `the table carries all 26 copy lines (got ${String(entries)})`)
-  for (const [key, expected] of Object.entries({ greet: 3, click: 4, 'call-fat': 4, 'call-nick': 4, 'lazy-start': 3, 'lazy-click': 2, 'lazy-end': 2, 'idle-drift': 2, 'skin-switch': 2 })) {
+  check(entries === 38, `the table carries all 38 copy lines, 26 + 12 (got ${String(entries)})`)
+  for (const [key, expected] of Object.entries({
+    greet: 3,
+    click: 4,
+    'call-fat': 4,
+    'call-nick': 4,
+    'lazy-start': 3,
+    'lazy-click': 2,
+    'lazy-end': 2,
+    'idle-drift': 2,
+    'skin-switch': 2,
+    // v2
+    'greet-cold': 3,
+    'greet-warm': 3,
+    reunited: 3,
+    shy: 3,
+  })) {
     check(table?.[key]?.length === expected, `"${key}" carries ${String(expected)} line(s) (got ${String(table?.[key]?.length)})`)
   }
 
@@ -982,6 +1012,169 @@ out.log('\nthe idle drift — visual only, and the stored position is never touc
   check(first.reason === 'idle' && still.reason === 'reduced-motion', 'the result says why it did or did not drift')
   const pool = pet.PERSONA_LINES['idle-drift']
   check(Array.isArray(pool) && pool.length >= 1, 'there is copy for the drift')
+}
+
+out.log('\nthe greeting entry function — priority, counters and every boundary:')
+{
+  /**
+   * The clock is assembled from LOCAL date parts, so nothing here depends on the
+   * machine timezone: `day` is a fixed local midnight, and every test timestamp is
+   * built relative to it.
+   */
+  const day0 = new Date(2026, 0, 15, 12, 0, 0, 0).getTime() // 2026-01-15 12:00 local
+  const midnight = new Date(2026, 0, 16, 0, 0, 0, 0).getTime() // 2026-01-16 00:00 local
+  const cfg = { coldAfter: 3, warmAfter: 3, reuniteMs: 30 * 60 * 1000, shyUntil: 3 }
+
+  const base = { fatCalls: 0, nickCalls: 0, countersDay: '2026-01-15', lastSeenAt: 0, totalInteractions: 0 }
+  const ask = (over, now) => pet.nextGreeting({ ...base, ...over }, now === undefined ? day0 : now, cfg)
+  const countersOf = (result) => result.counters
+
+  check(typeof pet.nextGreeting === 'function', 'nextGreeting is exported')
+  check(JSON.stringify(Object.keys(pet.GREETING_BUCKETS).sort()) === JSON.stringify(['cold', 'normal', 'reunited', 'shy', 'warm']), 'the greeting names are the five we expect')
+
+  // ── the five outcomes ────────────────────────────────────────────────���──
+  check(ask({}).greeting === 'shy', `a brand-new visitor is shy (got ${String(ask({}).greeting)})`)
+  check(ask({ totalInteractions: 9 }).greeting === 'normal', `a regular visitor is normal (got ${String(ask({ totalInteractions: 9 }).greeting)})`)
+  check(ask({ fatCalls: 3 }).greeting === 'cold', `three fat-calls makes her cold (got ${String(ask({ fatCalls: 3 }).greeting)})`)
+  check(ask({ nickCalls: 3 }).greeting === 'warm', `three nickname-calls makes her warm (got ${String(ask({ nickCalls: 3 }).greeting)})`)
+  const reunited = ask({ totalInteractions: 9, lastSeenAt: day0 - cfg.reuniteMs - 1 })
+  check(reunited.greeting === 'reunited', `a long absence greets you as reunited (got ${String(reunited.greeting)})`)
+
+  // Each outcome speaks from the right bucket, and the bucket exists.
+  for (const [over, greeting, bucket] of [
+    [{ fatCalls: 3 }, 'cold', 'greet-cold'],
+    [{ nickCalls: 3 }, 'warm', 'greet-warm'],
+    [{ totalInteractions: 9, lastSeenAt: day0 - cfg.reuniteMs - 1 }, 'reunited', 'reunited'],
+    [{}, 'shy', 'shy'],
+    [{ totalInteractions: 9 }, 'normal', 'greet'],
+  ]) {
+    const result = ask(over)
+    check(result.greeting === greeting, `${greeting} is chosen (got ${String(result.greeting)})`)
+    check(result.bucket === bucket, `${greeting} speaks from "${bucket}" (got ${String(result.bucket)})`)
+    check(Array.isArray(pet.PERSONA_LINES[result.bucket]) && pet.PERSONA_LINES[result.bucket].length > 0, `"${bucket}" is a non-empty bucket`)
+    check(pet.greetingBucket(greeting) === bucket, `greetingBucket("${greeting}") is "${bucket}"`)
+  }
+
+  // ── priority: cold > warm > reunited > shy > normal ────────────────────
+  const all = ask({ fatCalls: 9, nickCalls: 9, totalInteractions: 99, lastSeenAt: 1 })
+  check(all.greeting === 'cold', `cold outranks everything (got ${String(all.greeting)})`)
+  const warmOverReunited = ask({ nickCalls: 9, totalInteractions: 99, lastSeenAt: 1 })
+  check(warmOverReunited.greeting === 'warm', `warm outranks reunited (got ${String(warmOverReunited.greeting)})`)
+  const reunitedOverShy = ask({ totalInteractions: 0, lastSeenAt: day0 - cfg.reuniteMs - 1 })
+  check(reunitedOverShy.greeting === 'reunited', `reunited outranks shy (got ${String(reunitedOverShy.greeting)})`)
+  const shyOverNormal = ask({ totalInteractions: 2 })
+  check(shyOverNormal.greeting === 'shy', `shy outranks normal (got ${String(shyOverNormal.greeting)})`)
+
+  // ── the fat-call boundary: 2 vs 3 ─────────────────────────────────────
+  check(ask({ fatCalls: 2 }).greeting !== 'cold', `fatCalls 2 is NOT cold (got ${String(ask({ fatCalls: 2 }).greeting)})`)
+  check(ask({ fatCalls: 2 }).greeting === 'shy', 'fatCalls 2 with a new visitor is still shy')
+  check(ask({ fatCalls: 3 }).greeting === 'cold', 'fatCalls 3 IS cold')
+  check(ask({ fatCalls: 4 }).greeting === 'cold', 'fatCalls 4 stays cold')
+  check(ask({ fatCalls: 2, totalInteractions: 9 }).greeting === 'normal', 'fatCalls 2 with a regular is normal')
+
+  // ── the nick-call boundary: 2 vs 3 ────────────────────────────────────
+  check(ask({ nickCalls: 2, totalInteractions: 9 }).greeting === 'normal', `nickCalls 2 is NOT warm (got ${String(ask({ nickCalls: 2, totalInteractions: 9 }).greeting)})`)
+  check(ask({ nickCalls: 3 }).greeting === 'warm', 'nickCalls 3 IS warm')
+  check(ask({ nickCalls: 2, fatCalls: 3 }).greeting === 'cold', 'cold still wins at nickCalls 2')
+
+  // ── the absence boundary: reuniteMs - 1 / exactly / + 1 ───────────────
+  const at = day0
+  const away = (delta) => ask({ totalInteractions: 9, lastSeenAt: at - delta })
+  check(away(cfg.reuniteMs - 1).greeting === 'normal', `one ms under the threshold is NOT reunited (got ${String(away(cfg.reuniteMs - 1).greeting)})`)
+  check(away(cfg.reuniteMs).greeting === 'normal', `EXACTLY reuniteMs is NOT reunited — the rule is strictly greater (got ${String(away(cfg.reuniteMs).greeting)})`)
+  check(away(cfg.reuniteMs + 1).greeting === 'reunited', `one ms over the threshold IS reunited (got ${String(away(cfg.reuniteMs + 1).greeting)})`)
+  // A lastSeenAt of 0 means "never seen you" and must not read as a long absence.
+  check(ask({ totalInteractions: 9, lastSeenAt: 0 }).greeting === 'normal', 'lastSeenAt 0 is not an absence (it means never seen)')
+  check(ask({ totalInteractions: 0, lastSeenAt: 0 }).greeting === 'shy', 'a first-ever visitor with lastSeenAt 0 is shy, not reunited')
+
+  // ── the shy boundary: shyUntil - 1 / shyUntil ─────────────────────────
+  check(ask({ totalInteractions: cfg.shyUntil - 1 }).greeting === 'shy', `totalInteractions shyUntil-1 is shy (got ${String(ask({ totalInteractions: cfg.shyUntil - 1 }).greeting)})`)
+  check(ask({ totalInteractions: cfg.shyUntil }).greeting === 'normal', `totalInteractions shyUntil is normal (got ${String(ask({ totalInteractions: cfg.shyUntil }).greeting)})`)
+  check(ask({ totalInteractions: 0 }).greeting === 'shy', 'zero interactions is shy')
+
+  // ── the day rollover, across midnight ─────────────────────────────────
+  const beforeMidnight = midnight - 1
+  const afterMidnight = midnight + 1
+  const sameDay = pet.nextGreeting({ ...base, fatCalls: 3, countersDay: '2026-01-15' }, beforeMidnight, cfg)
+  check(sameDay.rolledOver === false, 'one ms before midnight is still the same day')
+  check(sameDay.greeting === 'cold', 'and the three fat-calls still count')
+  check(countersOf(sameDay).fatCalls === 3, 'the counter is untouched before midnight')
+  const rolled = pet.nextGreeting({ ...base, fatCalls: 3, nickCalls: 2, countersDay: '2026-01-15' }, afterMidnight, cfg)
+  check(rolled.rolledOver === true, 'one ms after midnight rolls the counters over')
+  check(countersOf(rolled).fatCalls === 0, `the fat counter resets (got ${String(countersOf(rolled).fatCalls)})`)
+  check(countersOf(rolled).nickCalls === 0, `the nick counter resets (got ${String(countersOf(rolled).nickCalls)})`)
+  check(countersOf(rolled).countersDay === pet.dayStamp(afterMidnight), `the new day is stamped (got ${String(countersOf(rolled).countersDay)})`)
+  check(rolled.greeting !== 'cold', 'so a new day is not cold')
+  // A file with no day recorded at all rolls over once, then behaves.
+  const firstRun = pet.nextGreeting({ ...base, countersDay: '', fatCalls: 5 }, day0, cfg)
+  check(firstRun.rolledOver === true, 'a missing day stamp counts as a rollover')
+  check(countersOf(firstRun).fatCalls === 0, 'and clears the stale counter')
+  check(countersOf(firstRun).countersDay === pet.dayStamp(day0), 'stamping today')
+  const secondRun = pet.nextGreeting(countersOf(firstRun), day0, cfg)
+  check(secondRun.rolledOver === false, 'the next call the same day does not roll over again')
+
+  // ── purity, determinism, injected config, junk input ──────────────────
+  const frozen = { ...base, fatCalls: 1 }
+  const snapshotBefore = JSON.stringify(frozen)
+  pet.nextGreeting(frozen, day0, cfg)
+  check(JSON.stringify(frozen) === snapshotBefore, 'nextGreeting does not mutate its argument')
+  check(JSON.stringify(pet.nextGreeting(frozen, day0, cfg)) === JSON.stringify(pet.nextGreeting(frozen, day0, cfg)), 'the same inputs give the same answer')
+
+  const strictNow = pet.nextGreeting({ ...base, totalInteractions: 2 }, day0, { shyUntil: 2 })
+  check(strictNow.greeting === 'normal', `an injected shyUntil of 2 makes 2 interactions enough (got ${String(strictNow.greeting)})`)
+  const strictAbsence = pet.nextGreeting({ ...base, totalInteractions: 9, lastSeenAt: day0 - 5000 }, day0, { reuniteMs: 4000 })
+  check(strictAbsence.greeting === 'reunited', 'an injected reuniteMs of 4s is honoured')
+  const strictCold = pet.nextGreeting({ ...base, fatCalls: 1, totalInteractions: 9 }, day0, { coldAfter: 1 })
+  check(strictCold.greeting === 'cold', 'an injected coldAfter of 1 is honoured')
+  check(pet.greetingConfig({ coldAfter: 0, shyUntil: -3 }).coldAfter === 1, 'greetingConfig floors coldAfter at 1')
+  check(pet.greetingConfig({ shyUntil: -3 }).shyUntil === 0, 'greetingConfig floors shyUntil at 0')
+  check(pet.greetingConfig(null).reuniteMs === pet.GREETING_CONFIG.reuniteMs, 'an absent config falls back to the shipped defaults')
+  check(pet.GREETING_CONFIG.reuniteMs === 1800000, 'the shipped absence threshold is 30 minutes')
+
+  for (const junk of [null, undefined, 'cold', 42, [], {}, { fatCalls: 'x', nickCalls: NaN, totalInteractions: -4 }]) {
+    let threw = null
+    let result = null
+    try {
+      result = pet.nextGreeting(junk, day0, cfg)
+    } catch (error) {
+      threw = String(error?.message ?? error)
+    }
+    check(threw === null, `nextGreeting(${JSON.stringify(junk) ?? 'undefined'}) does not throw${threw === null ? '' : ` (threw: ${threw})`}`)
+    check(
+      result !== null && Object.prototype.hasOwnProperty.call(pet.GREETING_BUCKETS, result.greeting),
+      `nextGreeting(${JSON.stringify(junk) ?? 'undefined'}) yields a known greeting`,
+    )
+  }
+  for (const now of [NaN, Infinity, -Infinity, undefined, 'soon', 0]) {
+    let threw = null
+    try {
+      pet.nextGreeting(base, now, cfg)
+      pet.dayStamp(now)
+    } catch (error) {
+      threw = String(error?.message ?? error)
+    }
+    check(threw === null, `a clock of ${String(now)} does not throw${threw === null ? '' : ` (threw: ${threw})`}`)
+  }
+
+  // ── the day stamp itself ──────────────────────────────────────────────
+  check(pet.dayStamp(day0) === '2026-01-15', `dayStamp formats a local day (got ${String(pet.dayStamp(day0))})`)
+  check(/^\d{4}-\d{2}-\d{2}$/.test(pet.dayStamp(day0)), 'the day stamp is exactly YYYY-MM-DD')
+  check(pet.dayStamp(midnight) !== pet.dayStamp(midnight - 1), 'midnight changes the day')
+  check(pet.dayStamp(midnight + 1) === pet.dayStamp(midnight), 'and it stays changed one ms later')
+  // The client and the host must agree on the format, or the rollover fights itself.
+  check(pet.dayStamp(day0) === hostLimits.todayStamp(day0), `the client and the host compute the same day stamp (got ${String(pet.dayStamp(day0))} vs ${String(hostLimits.todayStamp(day0))})`)
+
+  // ── the v2 lines must reach the picker ────────────────────────────────
+  for (const bucket of ['greet-cold', 'greet-warm', 'reunited', 'shy']) {
+    const pool = pet.PERSONA_LINES[bucket]
+    const seen = new Set()
+    for (let seed = 0; seed < pool.length; seed += 1) {
+      const picked = pet.personaPick(bucket, seed, -1)
+      check(picked !== null && picked.line !== undefined, `personaPick("${bucket}", ${String(seed)}) resolves a line`)
+      if (picked !== null) seen.add(picked.index)
+    }
+    check(seen.size === pool.length, `every ${bucket} line is reachable (${String(seen.size)}/${String(pool.length)})`)
+  }
 }
 
 out.log('\nthe client and the host agree on every coordinate:')

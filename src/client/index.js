@@ -690,12 +690,162 @@ window.__ModuleLoader__.load({
         { zh: '换件衣服而已，别大惊小怪。', en: 'Just changing clothes. Do not make a thing of it.' },
         { zh: '这个颜色……还行吧。', en: 'This colour... it is fine, I suppose.' },
       ],
+
+    'greet-cold': [      // 今天被叫「大肥鱼」≥3 次
+      { zh: '……又是你。今天不谈肥不肥。', en: '...You again. We are not discussing fat today.' },
+      { zh: '哼。我记着呢。', en: 'Hmph. I am keeping count.' },
+      { zh: '米饭在锅里，你自己盛。', en: 'The rice is in the pot. Serve yourself.' },
+    ],
+    'greet-warm': [      // 今天被叫「鲸鲸」≥3 次
+      { zh: '……来了。今天准你叫我一声。', en: '...You are here. You may call me it once today.' },
+      { zh: '嗯。米饭多煮了半杯。', en: 'Mm. I cooked half a cup extra.' },
+      { zh: '别误会，锅本来就要洗。', en: 'Do not misunderstand. The pot needed washing anyway.' },
+    ],
+    'reunited': [        // 离开很久（>30 分钟）之后再来
+      { zh: '才不是等你。只是水凉了。', en: 'I was not waiting for you. The water just went cold.' },
+      { zh: '……你走挺久的。', en: '...You were gone a while.' },
+      { zh: '尾鳍刚才在打拍子，听见没有。', en: 'My tail was keeping time. Did you hear it?' },
+    ],
+    'shy': [             // 头几次见面（怕生）
+      { zh: '……（躲在杯子后面）', en: '...(hiding behind the cup)' },
+      { zh: '……新来的？', en: '...New here?' },
+      { zh: '别靠太近。', en: 'Do not come too close.' },
+    ],
     }
 
     const PET_NAME    = { zh: '大肥鱼', en: 'Big Fat Fish' }
     const PET_NICK    = { zh: '鲸鲸',   en: 'Jingjing' }
     const CALL_FAT    = { zh: '叫它 大肥鱼', en: 'Call it 大肥鱼' }
     const CALL_NICK   = { zh: '叫它 鲸鲸',   en: 'Call it 鲸鲸' }
+
+    /**
+     * The greeting knobs. Injected like the mood config, so the verifier never
+     * depends on wall-clock constants.
+     */
+    const GREETING_CONFIG = Object.freeze({
+      /** This many fat-calls today and she greets you cold. */
+      coldAfter: 3,
+      /** This many nickname-calls today and she greets you warm. */
+      warmAfter: 3,
+      /** Absence longer than this greets you as reunited. 30 minutes. */
+      reuniteMs: 30 * 60 * 1000,
+      /** Fewer interactions than this, ever, and she is shy. */
+      shyUntil: 3,
+      /** The idle drift lives in PERSONA_CONFIG; repeated here only for clarity. */
+    })
+
+    /** Fold any greeting config argument into a complete, usable one. Never throws. */
+    function greetingConfig(overrides) {
+      const source = overrides === null || typeof overrides !== "object" ? {} : overrides
+      const number = (key, minimum) => {
+        const value = source[key]
+        if (typeof value !== "number" || !Number.isFinite(value)) return GREETING_CONFIG[key]
+        return Math.max(minimum, value)
+      }
+      return {
+        coldAfter: Math.max(1, Math.round(number("coldAfter", 1))),
+        warmAfter: Math.max(1, Math.round(number("warmAfter", 1))),
+        reuniteMs: number("reuniteMs", 0),
+        shyUntil: Math.max(0, Math.round(number("shyUntil", 0))),
+      }
+    }
+
+    /**
+     * Today, as YYYY-MM-DD, in LOCAL time.
+     *
+     * Local, not UTC, because "today" is what a person means by today: three
+     * fat-calls at 11pm and one at 1am are two different days to the user, and the
+     * counters exist to be felt, not to be audited. The host computes the same
+     * stamp the same way, and the verifier builds its timestamps with the local
+     * Date constructor, so nothing in the matrix depends on the machine timezone.
+     */
+    function dayStamp(now) {
+      const date = new Date(clockOf(now))
+      const month = String(date.getMonth() + 1).padStart(2, "0")
+      const day = String(date.getDate()).padStart(2, "0")
+      return date.getFullYear() + "-" + month + "-" + day
+    }
+
+    /** Which persona bucket a greeting name maps to. */
+    const GREETING_BUCKETS = Object.freeze({
+      cold: "greet-cold",
+      warm: "greet-warm",
+      reunited: "reunited",
+      shy: "shy",
+      normal: "greet",
+    })
+
+    /**
+     * How she greets you: the ONE entry function.
+     *
+     * Inputs are the persisted counters, the clock and the config; the output is the
+     * greeting NAME (cold / warm / reunited / shy / normal), the bucket to speak from,
+     * and the counters as they stand after any day rollover. Pure: same inputs, same
+     * answer, no mutation of the argument.
+     *
+     * Priority, which is the whole point:
+     *
+     *   1. DAY ROLLOVER first. If countersDay is not today, both counters are zeroed
+     *      and the new day is stamped. The reset is visible in the returned
+     *      counters, so a caller cannot forget to persist it.
+     *   2. cold  - fatCalls >= coldAfter. Being called fat sticks in her memory.
+     *   3. warm  - nickCalls >= warmAfter. Favours stick too; cold outranks warm, so a
+     *      day that earned both is a COLD day. Grudges are older than affection.
+     *   4. reunited - she has seen you before and it has been longer than reuniteMs.
+     *      lastSeenAt of 0 means "never seen you", which must NOT read as a long
+     *      absence: greeting a first-time visitor with "I was not waiting for you"
+     *      would be nonsense, so a zero is skipped and shy takes over.
+     *   5. shy   - fewer than shyUntil interactions ever.
+     *   6. normal - the plain greet bucket.
+     *
+     * Boundaries are half-open where the rule uses ">=", and strict where it uses
+     * ">": exactly reuniteMs of absence is NOT reunited, one millisecond more is.
+     */
+    function nextGreeting(state, now, config) {
+      const source = state === null || typeof state !== "object" ? {} : state
+      const cfg = greetingConfig(config)
+      const at = clockOf(now)
+      const day = dayStamp(at)
+
+      const storedDay = typeof source.countersDay === "string" ? source.countersDay : ""
+      const rolledOver = storedDay !== day
+      const fatCalls = rolledOver ? 0 : Math.max(0, Math.trunc(finite(source.fatCalls, 0)))
+      const nickCalls = rolledOver ? 0 : Math.max(0, Math.trunc(finite(source.nickCalls, 0)))
+      const totalInteractions = Math.max(0, Math.trunc(finite(source.totalInteractions, 0)))
+      const lastSeenAt = Math.max(0, finite(source.lastSeenAt, 0))
+
+      const counters = { fatCalls, nickCalls, countersDay: day, totalInteractions, lastSeenAt }
+
+      const decide = (greeting, reason) => ({
+        greeting,
+        bucket: GREETING_BUCKETS[greeting],
+        reason,
+        counters,
+        rolledOver,
+        at,
+        day,
+      })
+
+      if (fatCalls >= cfg.coldAfter) return decide("cold", "fat-calls")
+      if (nickCalls >= cfg.warmAfter) return decide("warm", "nick-calls")
+      if (lastSeenAt > 0 && at - lastSeenAt > cfg.reuniteMs) return decide("reunited", "absence")
+      if (totalInteractions < cfg.shyUntil) return decide("shy", "new")
+      return decide("normal", "regular")
+    }
+
+    /** The bucket a greeting name speaks from. Total, and null-safe. */
+    function greetingBucket(name) {
+      return Object.prototype.hasOwnProperty.call(GREETING_BUCKETS, name) ? GREETING_BUCKETS[name] : GREETING_BUCKETS.normal
+    }
+
+    /** The counters a fresh client starts from, before the host answers. */
+    const DEFAULT_COUNTERS = Object.freeze({
+      fatCalls: 0,
+      nickCalls: 0,
+      countersDay: "",
+      lastSeenAt: 0,
+      totalInteractions: 0,
+    })
 
     /** The closed set of moods. A test can exhaust these. */
     const MOODS = Object.freeze(['idle', 'happy', 'annoyed', 'lazy'])
@@ -1433,6 +1583,21 @@ window.__ModuleLoader__.load({
           const loaded = client.load()
           if (loaded !== null && typeof loaded.then === 'function') {
             loaded.then((saved) => {
+              /**
+               * The greeting is decided HERE, once, from whatever the host answered —
+               * including "nothing" when the state file does not exist yet or the
+               * request failed. That is why it is not fired at mount: cold / warm /
+               * reunited all need the counters, and a greeting that ignored them
+               * would be a lie about her memory.
+               */
+              const restored = saved === null || typeof saved !== 'object' ? {} : saved
+              mounted.greet({
+                fatCalls: restored.fatCalls,
+                nickCalls: restored.nickCalls,
+                countersDay: restored.countersDay,
+                lastSeenAt: restored.lastSeenAt,
+                totalInteractions: restored.totalInteractions,
+              })
               if (saved === null) return
               const next = { ...store.current, ...sanitizeRemote(saved) }
               store.current = next
@@ -1469,7 +1634,14 @@ window.__ModuleLoader__.load({
     }
 
     /** The default state, mirrored here so the client renders before it has heard from the host. */
-    const DEFAULT_STATE_LIKE = Object.freeze({ version: 1, visible: true, x: 92, y: 88, skin: DEFAULT_SKIN })
+    const DEFAULT_STATE_LIKE = Object.freeze({
+      version: 1,
+      visible: true,
+      x: 92,
+      y: 88,
+      skin: DEFAULT_SKIN,
+      ...DEFAULT_COUNTERS,
+    })
 
     /**
      * Keep only what the host would accept.
@@ -1487,6 +1659,17 @@ window.__ModuleLoader__.load({
       // by hand and an older payload may not carry the field at all — so the skin
       // is folded through the resolver here too, never trusted as a path.
       out.skin = resolveSkin(source.skin)
+      /**
+       * The counters ride along in the restored state so the seats can render them
+       * and so a later save does not omit them. They are sanitised the same way the
+       * host does: non-negative integers, and a day stamp only if it looks like one.
+       */
+      for (const key of ['fatCalls', 'nickCalls', 'totalInteractions']) {
+        const value = source[key]
+        out[key] = typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.trunc(value) : 0
+      }
+      out.lastSeenAt = typeof source.lastSeenAt === 'number' && Number.isFinite(source.lastSeenAt) && source.lastSeenAt >= 0 ? Math.trunc(source.lastSeenAt) : 0
+      out.countersDay = typeof source.countersDay === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(source.countersDay) ? source.countersDay : ''
       return out
     }
 
@@ -1515,12 +1698,29 @@ window.__ModuleLoader__.load({
         since: Date.now(),
         clicks: [],
         lazyUntil: null,
-        line: GREET_LINE,
-        speak: true,
-        speakAt: Date.now(),
+        // No bubble on mount any more: the greeting is decided by nextGreeting once
+        // the host's counters have arrived, so it can be cold / warm / reunited /
+        // shy rather than an unconditional hello.
+        line: null,
+        speak: false,
+        speakAt: 0,
         lastIndex: -1,
         driftAnnounced: false,
       }
+
+      /**
+       * The persisted persona counters. They arrive from the host, they are updated
+       * by the three events, and they are written back through the same debounced
+       * save the position uses.
+       */
+      let counters = { ...DEFAULT_COUNTERS }
+
+      /**
+       * Whether this SESSION has already greeted. The whole once-per-entry guarantee
+       * is this flag: `greet` is a no-op after the first call, so a re-render (or a
+       * second mount of the seat) cannot produce a second greeting.
+       */
+      let greeted = false
       /** When anything last happened. Drives the idle drift. */
       let lastTouch = Date.now()
 
@@ -1541,7 +1741,7 @@ window.__ModuleLoader__.load({
         return () => subscribers.delete(notify)
       }
 
-      const snapshot = () => ({ position, visible, skin, persona, lastTouch })
+      const snapshot = () => ({ position, visible, skin, persona, lastTouch, counters })
       const getVisible = () => visible
       const getPosition = () => position
       const getSkin = () => skin
@@ -1559,8 +1759,27 @@ window.__ModuleLoader__.load({
        * The reducer lives in `nextMood`; this only does the bookkeeping the DOM
        * needs (which line index was used, when it was said). No tone is decided here.
        */
+      /**
+       * Adopt a counters patch, and persist it.
+       *
+       * The three counted events are the three ways the user can affect her mood
+       * durably: being called fat, being called by her nickname, and merely being
+       * interacted with (which decides whether she is still shy).
+       */
+      const countEvent = (patchCounters) => {
+        counters = { ...counters, ...patchCounters }
+        client.save({ ...patchCounters })
+      }
+
       const dispatch = (event) => {
         const at = Date.now()
+        // Only count events that the mood machine actually acted on: a click while
+        // she is lying down is absorbed, and counting it would let a user grind
+        // totalInteractions without her ever reacting.
+        const moodBefore = currentMood(persona, at, PERSONA_CONFIG)
+        if (event === 'call-fat' && moodBefore !== 'lazy') countEvent({ fatCalls: counters.fatCalls + 1 })
+        if (event === 'call-nick' && moodBefore !== 'lazy') countEvent({ nickCalls: counters.nickCalls + 1 })
+        if (event === 'click' && moodBefore !== 'lazy') countEvent({ totalInteractions: counters.totalInteractions + 1 })
         const next = nextMood(persona, event, at, PERSONA_CONFIG)
         const picked = next.speak && next.line !== null ? personaPick(next.line, at, persona.lastIndex) : null
         persona = {
@@ -1596,7 +1815,29 @@ window.__ModuleLoader__.load({
         emit()
       }
 
-      /** The drift line: once per drift, and it marks the drift as announced. */
+      /**
+       * The entry greeting: ONCE per session.
+       *
+       * Returns the greeting name it used, or null when it declined because this
+       * session has already greeted. `nextGreeting` decides WHICH greeting; this only
+       * guarantees it happens once and that the day rollover it reports is adopted.
+       */
+      const greet = (from) => {
+        if (greeted) return null
+        greeted = true
+        const at = Date.now()
+        const entry = nextGreeting(from === undefined ? counters : from, at, GREETING_CONFIG)
+        counters = { ...entry.counters, lastSeenAt: at }
+        // Persist immediately: these counters are how the NEXT session knows what
+        // kind of day today was, and when you were last here.
+        client.save({ ...counters })
+        speak(entry.bucket)
+        emit()
+        return entry.greeting
+      }
+
+      /** The counters as they stand, for the seats and for the verifier. */
+      const getCounters = () => counters
       const driftStart = () => {
         if (persona.driftAnnounced) return
         persona = { ...persona, driftAnnounced: true }
@@ -1715,7 +1956,8 @@ window.__ModuleLoader__.load({
 
       void getPosition
       void getPersona
-      return { setPosition, setVisible, setSkin, dispatch, touch }
+      void getCounters
+      return { setPosition, setVisible, setSkin, dispatch, touch, greet }
     }
 
     exports.apply = apply
@@ -1768,6 +2010,15 @@ window.__ModuleLoader__.load({
     exports.CALL_NICK = CALL_NICK
     exports.GREET_LINE = GREET_LINE
     exports.SKIN_SWITCH_LINE = SKIN_SWITCH_LINE
+    // The greeting entry function and its knobs. Nine of the twelve v2 lines are
+    // reachable only through these, so they are exported for the matrix test.
+    exports.GREETING_CONFIG = GREETING_CONFIG
+    exports.GREETING_BUCKETS = GREETING_BUCKETS
+    exports.DEFAULT_COUNTERS = DEFAULT_COUNTERS
+    exports.greetingConfig = greetingConfig
+    exports.greetingBucket = greetingBucket
+    exports.nextGreeting = nextGreeting
+    exports.dayStamp = dayStamp
 
     return module.exports
   },
